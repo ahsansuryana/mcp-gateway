@@ -1,0 +1,18 @@
+{
+  "name": "mcp-gateway-spikes",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Sprint 0 scratch project. Never imported by src/. Throwaway after Sprint 0.",
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/express": "2.0.2",
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "express": "5.1.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "cross-spawn": "^7.0.6"
+  }
+}
