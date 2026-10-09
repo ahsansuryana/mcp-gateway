@@ -1,0 +1,22 @@
+=== subscriptions/listen against the gateway ===
+listen() ack honoredFilter => {"toolsListChanged":true}
+[client] received notifications/tools/list_changed
+notifications received by the client => ["tools/list_changed"]
+publishing on the UPSTREAM bus...
+notifications after upstream publish => ["tools/list_changed"]
+subscription.close()...
+sub.closed => local
+
+=== ttlMs/cacheScope on the wire ===
+upstream tools/list ttlMs/cacheScope => 20000 private
+upstream server/discover ttlMs/cacheScope => 900000 public
+gateway tools/list ttlMs/cacheScope => 5000 private
+
+=== progress + traceparent through the gateway ===
+slow_progress result => [{"type":"text","text":"progress rounds=3"}]
+
+=== abort propagates downstream -> upstream ===
+hang aborted => SdkError SdkError | AbortError: This operation was aborted
+upstream observed abort? => true
+
+probe-subscriptions done

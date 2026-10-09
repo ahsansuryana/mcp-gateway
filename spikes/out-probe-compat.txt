@@ -1,0 +1,43 @@
+[stateless-default] listening on 3111
+[legacy-reject] listening on 3112
+[modern-only] listening on 3113
+
+=== isLegacyRequest classification ===
+modern tools/list classified legacy?  false
+2025 initialize classified legacy?    true
+
+=== client/server matrix ===
+default-client -> modern-only server: FAILED -> SdkHttpError: Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32022,"message":"Unsupported protocol version: 2025-11-25","data":{"supported":["2026-07-28"],"requested":"2025-11-25"}},"id":0}
+default-client -> stateless-default server: connect OK; discover=n/a
+default-client -> stateless-default server: tools = ping_tool
+auto-client -> modern-only server: connect OK; discover=["2026-07-28"]
+auto-client -> modern-only server: tools = ping_tool
+pinned-2026-07-28 client -> modern-only server: connect OK; discover=["2026-07-28"]
+pinned-2026-07-28 client -> modern-only server: tools = ping_tool
+auto-client -> legacy-reject server: connect OK; discover=["2026-07-28"]
+auto-client -> legacy-reject server: tools = ping_tool
+pinned-1999-01-01 client -> stateless-default server: FAILED -> TypeError: versionNegotiation: { pin: '1999-01-01' } is not a modern protocol revision — pinning is for 2026-07-28 and later; omit versionNegotiation (or use mode: 'legacy') for 2025-era servers.
+
+=== raw unknown MCP-Protocol-Version ===
+status 400 => {"jsonrpc":"2.0","error":{"code":-32022,"message":"Unsupported protocol version: 1999-01-01","data":{"supported":["2026-07-28"],"requested":"1999-01-01"}},"id":1}
+
+=== raw GET and DELETE on the MCP endpoint ===
+GET -> 405 {"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed."},"id":null}
+DELETE -> 405 {"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed."},"id":null}
+
+=== raw header/body mismatch (Mcp-Method) ===
+status 400 => {"jsonrpc":"2.0","error":{"code":-32020,"message":"Bad Request: the request headers and body disagree: the body names method tools/list but the Mcp-Method header names tools/call","data":{"mismatch":{"header":"tools/call","body":"the body names method tools/list but the Mcp-Method header names tools/call"}}},"id":1}
+
+=== raw missing Mcp-Method header ===
+status 400 => {"jsonrpc":"2.0","error":{"code":-32020,"message":"Bad Request: the request headers and body disagree: the body names method tools/list but the required Mcp-Method header is absent","data":{"mismatch":{"header":"(missing)","body":"the body names method tools/list but the required Mcp-Method header is absent"}}},"id":1}
+
+=== body over the size limit (default 4 MiB, expect 413) ===
+status 413 => {"jsonrpc":"2.0","error":{"code":-32000,"message":"Payload Too Large: Request body must not exceed 4194304 bytes"},"id":null}
+
+=== Origin validation with the SDK helper in front ===
+origin=https://evil.example -> status 403
+origin=https://allowed.example -> status 200
+origin=null -> status 403
+origin=undefined -> status 200
+
+probe-compat done

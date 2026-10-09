@@ -1,0 +1,42 @@
+[upstream] listening on http://127.0.0.1:3101/mcp
+[gateway] upstream server/discover => {"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"fake-upstream","version":"0.0.1"}},"ttlMs":0,"cacheScope":"private","supportedVersions":["2026-07-28"],"capabilities":{"tools":{"listChanged":false}},"resultType":"complete"}
+[gateway] listening on http://127.0.0.1:3102/mcp
+
+=== raw POST server/discover ===
+status 200 content-type application/json
+{"result":{"supportedVersions":["2026-07-28"],"capabilities":{"tools":{"listChanged":false}},"resultType":"complete","ttlMs":60000,"cacheScope":"private","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mcp-gateway-spike","version":"0.0.0"}}},"jsonrpc":"2.0","id":1}
+
+=== raw POST tools/list ===
+[upstream<-gateway] recv {"jsonrpc":"2.0","id":0,"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"fake-upstream","version":"0.0.1
+[gateway] tools/list merged names = upstream_boom, upstream_echo, upstream_needs_input
+status 200 content-type application/json
+{"result":{"tools":[{"name":"upstream_boom","description":"Always fails at the tool level (isError: true).","inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{}}},{"name":"upstream_echo","title":"Echo","description":"Echo back the input, namespaced by the gateway.","inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"text":{"type":"string"}},"required":["text"]}},{"name":"upstream_needs_input","description":"Returns input_required once, then completes on the retry.","inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{}}}],"resultType":"complet
+
+=== raw POST tools/call unknown namespaced tool (expect -32602) ===
+{"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"Unknown tool: nope_missing"}}
+
+=== raw POST tools/call upstream_boom (expect isError tool result) ===
+[gateway] tools/call forward params keys = name,arguments
+[upstream<-gateway] recv {"jsonrpc":"2.0","id":1,"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"fake-upstream","version":"0.0.1
+{"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"fake-upstream","version":"0.0.1"}},"content":[{"type":"text","text":"upstream deliberately failed"}],"isError":true,"resultType":"complete"},"jsonrpc":"2.0","id":4}
+
+=== SDK client (modern era) against the gateway ===
+gateway server/discover => {"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mcp-gateway-spike","version":"0.0.0"}},"ttlMs":60000,"cacheScope":"private","supportedVersions":["2026-07-28"],"capabilities":{"tools":{"listChanged":false}},"resultType":"complete"}
+[gateway] tools/list merged names = upstream_boom, upstream_echo, upstream_needs_input
+tools/list names => upstream_boom, upstream_echo, upstream_needs_input
+[gateway] tools/call forward params keys = name,arguments
+[upstream<-gateway] recv {"jsonrpc":"2.0","id":2,"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"fake-upstream","version":"0.0.1
+callTool upstream_echo => {"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"fake-upstream","version":"0.0.1"}},"content":[{"type":"text","text":"upstream-echo:hi"}]}
+
+=== MRTR: gateway forwards input_required unchanged, client auto-fulfils ===
+[gateway] tools/call forward params keys = name,arguments
+[upstream<-gateway] recv {"jsonrpc":"2.0","id":3,"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"fake-upstream","version":"0.0.1
+[gateway-client] elicitation/create => Proceed?
+[gateway] tools/call forward params keys = name,arguments,inputResponses,requestState
+[upstream<-gateway] recv {"jsonrpc":"2.0","id":4,"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"fake-upstream","version":"0.0.1
+callTool upstream_needs_input => {"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"fake-upstream","version":"0.0.1"}},"content":[{"type":"text","text":"upstream-mrtr:complete state=upstream-minted-state"}]}
+
+=== timeout on the upstream call ===
+timeout threw => SdkError | code = REQUEST_TIMEOUT | Request timed out
+
+spike-1 done

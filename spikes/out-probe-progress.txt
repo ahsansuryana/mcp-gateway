@@ -1,0 +1,9 @@
+[gateway] forwarding _meta keys = progressToken,traceparent
+[upstream] received progressToken=0 traceparent=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
+[client] progress => {"progress":1,"total":3,"message":"[gw] step 1"}
+[client] progress => {"progress":2,"total":3,"message":"[gw] step 2"}
+[client] progress => {"progress":3,"total":3,"message":"[gw] step 3"}
+result => [{"type":"text","text":"counted done"}]
+progress notifications seen by the client => 3
+
+probe-progress done

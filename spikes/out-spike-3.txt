@@ -1,0 +1,27 @@
+[spike-3] upstream http://127.0.0.1:3151/mcp / gateway http://127.0.0.1:3152/mcp
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:3152/mcp,--transport,http,--method,tools/list,--format,json
+[exit 0]
+{"result":{"tools":[{"name":"up_add","description":"Add two integers.","inputSchema":{"type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"],"$schema":"https://json-schema.org/draft/2020-12/schema"}},{"name":"up_greet","description":"Greet a person.","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"$schema":"https://json-schema.org/draft/2020-12/schema"}}]}}
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:3152/mcp,--transport,http,--method,tools/call,--tool-name,up_add,--tool-arg,a=2,--tool-arg,b=40,--format,json
+[exit 0]
+{"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"inspector-upstream","version":"0.0.1"}},"content":[{"type":"text","text":"42"}]}}
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:3152/mcp,--transport,http,--method,tools/call,--tool-name,up_greet,--tool-args-json,{"name":"inspector"},--format,json
+[exit 0]
+{"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"inspector-upstream","version":"0.0.1"}},"content":[{"type":"text","text":"hello inspector"}]}}
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:3151/mcp,--transport,http,--method,tools/list,--format,json
+[exit 1]
+[stderr] {"error":{"code":"error","message":"Error POSTing to endpoint: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32022,\"message\":\"Unsupported protocol version: 2025-11-25\",\"data\":{\"supported\":[\"2026-07-28\"],\"requested\":\"2025-11-25\"}},\"id\":0}","status":400}}
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:3151/mcp,--transport,http,--protocol-era,modern,--method,tools/list,--format,json
+[exit 0]
+{"result":{"tools":[{"name":"add","description":"Add two integers.","inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"]}},{"name":"greet","description":"Greet a person.","inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}]}}
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:3152/mcp,--transport,http,--protocol-era,modern,--method,tools/list,--format,json
+[exit 0]
+{"result":{"tools":[{"name":"up_add","description":"Add two integers.","inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"]}},{"name":"up_greet","description":"Greet a person.","inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}]}}
+
+spike-3 done

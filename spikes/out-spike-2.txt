@@ -1,0 +1,19 @@
+=== default inherited env vars (D13) ===
+DEFAULT_INHERITED_ENV_VARS = ["APPDATA","COMSPEC","HOMEDRIVE","HOMEPATH","LOCALAPPDATA","PATH","PATHEXT","PROCESSOR_ARCHITECTURE","PROGRAMDATA","PROGRAMFILES","PROGRAMFILES(X86)","PROGRAMW6432","SYSTEMDRIVE","SYSTEMROOT","TEMP","USERNAME","USERPROFILE","WINDIR"]
+getDefaultEnvironment() keys = ["APPDATA","COMSPEC","HOMEDRIVE","HOMEPATH","LOCALAPPDATA","PATH","PATHEXT","PROCESSOR_ARCHITECTURE","PROGRAMDATA","PROGRAMFILES","PROGRAMFILES(X86)","PROGRAMW6432","SYSTEMDRIVE","SYSTEMROOT","TEMP","USERNAME","USERPROFILE","WINDIR"]
+stdio pid = 8848
+stdio server/discover = ["2026-07-28"]
+stdio getServerVersion = {"name":"fake-stdio-upstream","version":"0.0.1"}
+[child stderr] fake-stdio-server: ready
+stdio tools = show_env,add
+child env result = {"envKeys":["APPDATA","COMSPEC","HOMEDRIVE","HOMEPATH","LOCALAPPDATA","LOGONSERVER","PATH","PATHEXT","PROCESSOR_ARCHITECTURE","PROGRAMDATA","PROGRAMFILES","PROGRAMFILES(X86)","PROGRAMW6432","SPIKE_UPSTREAM_NAME","SPIKE_UPSTREAM_VALUE","SYSTEMDRIVE","SYSTEMROOT","TEMP","USERDOMAIN","USERNAME","USERPROFILE","WINDIR"],"upstreamName":"local-up","upstreamValue":"from-config","gatewaySecretLeaked":false
+
+[gateway] listening on 3141
+gateway merged tools = local_show_env,local_add
+through the gateway = {"envKeys":["APPDATA","COMSPEC","HOMEDRIVE","HOMEPATH","LOCALAPPDATA","LOGONSERVER","PATH","PATHEXT","PROCESSOR_ARCHITECTURE","PROGRAMDATA","PROGRAMFILES","PROGRAMFILES(X86)","PROGRAMW6432","SPIKE_UPSTREAM_NAME","SPIKE_UPSTREAM_VALUE","SYSTEMDRIVE","SYSTEMROOT","TEMP","USERDOMAIN","USERNAME","USERPR
+
+=== npx resolution probe (no shell) ===
+process.platform = win32
+npx probe FAILED => npx probe timed out after 30s
+
+spike-2 done
