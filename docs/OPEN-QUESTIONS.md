@@ -313,3 +313,34 @@ all (currently the Linux test path is `node:24-bookworm-slim` driven by hand).
 
 **Decision needed (deployment, not Sprint 4):** add `procps` to any image used in
 production, or drop the tree-kill escalation and rely on the SDK's direct-child close.
+
+---
+
+## Q-CIMD — Client ID Metadata Documents are blocked by Q4 (found in Sprint 5 S5.1)
+
+S5.1 (`docs/ref/oauth-flow.md` § 3.1, § 9 R2–R5) establishes that the Client ID Metadata
+Document path requires the client to **host a publicly reachable `https` document** and to use
+that URL as `client_id`.
+
+The gateway's `gateway.publicUrl` is unset because **Q4** (hosting target and public hostname)
+is still open, and inventing a hostname is forbidden.
+
+**What this blocks:** an authorization server that supports *only* CIMD cannot be used. ASes
+that offer `registration_endpoint` (DCR) or accept a pre-registered `clientId` still work.
+
+**What is NOT blocked:** the localhost redirect URI. The spec's own CIMD example lists
+`http://localhost:3000/callback` as acceptable
+(`docs/ref/spec-2026-07-28-basic-authorization-client-registration.md` line 64). The blocker is
+specifically the *metadata document*, which must be `https` and publicly reachable.
+
+**Options:**
+
+- (a) Answer Q4 and set `publicUrl`. The gateway then serves
+  `GET /.well-known/oauth-client.json` and CIMD works fully.
+- (b) Keep CIMD disabled and rely on DCR, documenting that CIMD-only ASes are unsupported.
+  Accepts the deprecation the spec warns about for DCR.
+- (c) Allow an operator-supplied static `clientMetadataUrl` pointing at a document they host
+  themselves. Keeps the gateway from having to be publicly reachable, but the operator owns
+  the hosting and its TLS.
+
+**Decision needed (human, before CIMD can be exercised):** which of (a), (b) or (c).
