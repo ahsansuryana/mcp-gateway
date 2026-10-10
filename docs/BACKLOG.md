@@ -26,9 +26,20 @@ owns. PLAN.md §3 rule 8: anything out of scope goes here instead of into code.
 - **Q1** — support legacy HTTP+SSE upstreams? Sprint 0 evidence: deprecated by the spec,
   Claude still supports it, the SDK v2 client exports `SSEClientTransport`. Default remains
   "no".
-- **Q2** — resolved by Sprint 0 evidence, needs ratification: `docs/adr/0002-protocol-compatibility.md`.
+- **Q2** — **decided** at the Sprint 0 gate: `gateway.legacyEra` config field, default
+  `'stateless'`. See `docs/adr/0002-protocol-compatibility.md`.
 - **Q3** — Sprint 6 architecture. Still open. Gate S6.0.
 - **Q4** — hosting target and public hostname. Still open, and now a hard requirement for
   claude.ai connectors (`docs/ref/claude-limits.md`).
 - **Q5** — is the `io.modelcontextprotocol/tasks` extension needed? Still open
   (`docs/OPEN-QUESTIONS.md` Q-TASKS-EXT).
+
+## From Sprint 1
+
+| ID | Item | Origin | Suggested home |
+|---|---|---|---|
+| B-14 | `src/index.ts` and the `serve` command do not exist yet; `dev`/`start` currently launch the CLI, which only implements `validate`. | `docs/OPEN-QUESTIONS.md` Q-SERVE-CMD | S2.5 |
+| B-15 | Decide the CORS posture for the Sprint 6 OAuth well-known routes. `@modelcontextprotocol/express` ships `cors` and `mcpAuthMetadataRouter` serves permissively; `/mcp` deliberately has no CORS middleware. | `docs/OPEN-QUESTIONS.md` Q-CORS | S6.1 |
+| B-16 | Regenerate `gateway.schema.json` in CI and fail the build on drift, so the committed schema can never diverge from `src/config/schema.ts`. | S1.5 | S7.5 |
+| B-17 | The dev-time Node floor is `>=20.19.0` (ESLint 10's `engines`), above the SDK's `>=20`. If a Node 20.0–20.18 target is ever required, ESLint must be pinned to v9. Recorded in `package.json#engines`. | S1.1 | — |
+| B-18 | `substitute()` deep-copies every plain object and array it walks. That is correct for a config document but means callers must not rely on object identity after substitution. | S1.2 | — |

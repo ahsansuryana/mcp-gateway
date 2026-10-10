@@ -102,32 +102,17 @@ assumes.
 
 ---
 
-## Q-COMPAT — BLOCKING (answers PLAN.md Q2 — Sprint 2 posture)
+## Q-COMPAT — DECIDED at the Sprint 0 gate (resolves PLAN.md Q2)
 
-**What.** PLAN.md Q2 asks whether to serve 2025-era clients. The answer is now known and
-needs ratifying.
+**What.** PLAN.md §9 Q2 asks whether to serve 2025-era clients. The evidence was settled in
+Sprint 0 (`docs/adr/0002-protocol-compatibility.md`); the **shape** is now decided.
 
-**Evidence.** `docs/SDK-NOTES.md` (j) + `spikes/out-spike-3.txt`:
+**Decision.** `gateway.legacyEra: 'stateless' | 'reject'` exists in the config schema
+(default `'stateless'`). Implemented in S1.2; consumed by `server/mcp.ts` in Sprint 2.
 
-- `createMcpHandler(factory)` serves both eras by default (`legacy: 'stateless'`).
-- The official MCP Inspector CLI defaults to the 2025 era and connected to the gateway with
-  no flags at all.
-- Claude.ai connectors follow the **2025-03-26 / 2025-06-18 / 2025-11-25 authorization specs**
-  (<https://claude.com/docs/connectors/building>), and the Claude testing docs describe
-  Claude identifying itself "in the MCP `initialize` handshake".
-
-**Consequence.** A modern-only gateway (`legacy: 'reject'`) is unreachable by claude.ai
-custom connectors and by the default Inspector. `mcp-handler` is unnecessary.
-
-**Options.**
-- (A) `legacy: 'stateless'` (the default). Serve both. Costs: the 2025 codec drops
-  `resultType`, `ttlMs`, `cacheScope` and MRTR vocabulary on legacy legs, so D11/D12-style
-  behaviour is 2026-only.
-- (B) `legacy: 'reject'`. Modern only. Simplest; loses claude.ai connectors.
-- (C) `legacy: 'stateless'` + a config flag to flip to `'reject'`.
-
-**Recommendation: (C)** — the SDK default is (A) and it is what makes the product usable
-from Claude at all.
+**Still open (carried into Sprint 2, not blocking Sprint 1).** The 2025-era wire codec has
+no `resultType` / `ttlMs` / `cacheScope` path and no `input_required` vocabulary, so D11 and
+the MRTR work are 2026-only in practice. See `docs/BACKLOG.md` B-01.
 
 ---
 
@@ -152,14 +137,28 @@ provider has no token".
 
 ---
 
-## Q-ZODJSON — BLOCKING (Sprint 1, S1.5)
+## Q-ZODJSON — RESOLVED in Sprint 1 (S1.5)
 
-**What.** PLAN.md §6 requires exporting `gateway.schema.json` from the zod schema and says
-"verify the zod v4 API for this". `zod@4.6.5` is installed but the JSON-Schema export API
-was **not** verified in Sprint 0 (no `src/`, no schema written yet).
+**Question.** PLAN.md §6 requires exporting `gateway.schema.json` from the zod schema and
+says "verify the zod v4 API for this".
 
-**Why it blocks.** S1.5's acceptance includes `npm run gen:schema` producing a usable
-schema. The agent will verify at the start of S1.5 and will not guess the API name.
+**Answer.** zod v4 exports `toJSONSchema`. Verified against
+`node_modules/zod/v4/core/to-json-schema.d.cts` and exercised by
+`scripts/gen-schema.ts` (`npm run gen:schema`, wired in S1.5).
+
+```ts
+z.toJSONSchema(schema, {
+  target: 'draft-2020-12',   // default; also the MCP spec's dialect for tool input schemas
+  io: 'input',               // describe what a human writes, so defaults stay "default"
+});
+```
+
+`unrepresentable` defaults to `"throw"`, `cycles` to `"ref"`. `override` is available for
+custom post-processing. Generated output puts the D4 upstream-name regex into
+`propertyNames`, so the strict-object rules survive into editor tooling.
+
+**Resolved.** No action needed. `gateway.schema.json` is committed and regenerable with
+`npm run gen:schema`.
 
 ---
 
@@ -231,6 +230,42 @@ discover it late.
 |---|---|
 | Does the SDK v2 server serve 2025-era clients for free? | Yes — `legacy: 'stateless'` is the `createMcpHandler` default, same factory, same endpoint. `mcp-handler` is not needed. → `docs/adr/0002-protocol-compatibility.md` |
 | Does an SDK env allowlist helper exist (D13)? | Yes — `getDefaultEnvironment()`; a caller `env` is merged ON TOP, never a replacement. No ADR needed. |
-| Which web layer (D16)? | Express + `@modelcontextprotocol/express` middleware + `createMcpHandler`/`toNodeHandler`. → `docs/adr/0001-http-layer.md` |
+| Which web layer (D16)? | Express + `@modelcontextprotocol/express` middleware + `createMcpHandler`/`toNodeHandler`. → `docs/adr/0001-http-layer.md`. **Approved at the Sprint 0 gate**; dependencies installed in S1.1. |
 | Are `inputResponses` / `requestState` inside `_meta`? | No — siblings of `arguments` in the request params. See Q-MRTRPROXY. |
 | Is `resources/subscribe` still a thing? | Replaced by `subscriptions/listen`; `Client.listen()` throws `MethodNotSupportedByProtocolVersion` on a 2025-era connection. |
+
+---
+
+## New in Sprint 1
+
+## Q-CORS — NON-BLOCKING (Sprint 2, S2.5)
+
+**What.** `@modelcontextprotocol/express` depends on `cors ^2.8.5`, and
+`mcpAuthMetadataRouter` serves its discovery documents "with permissive CORS". The gateway
+binds `0.0.0.0` by default and is meant to be reached from claude.ai, Claude Desktop and
+Claude Code — none of which are browsers.
+
+PLAN.md §8 says "no wildcard CORS by default", which this satisfies by NOT adding CORS
+middleware for `/mcp`. But the two OAuth discovery routes in Sprint 6 will be
+cross-origin to a browser-based client, and the question of what CORS policy they need has
+not been answered.
+
+**Decision needed (Sprint 6, not Sprint 2):** whether the well-known OAuth metadata routes
+get a restricted CORS allowlist, and what the allowlist is.
+
+---
+
+## Q-SERVE-CMD — NON-BLOCKING (Sprint 2)
+
+**What.** PLAN.md §5 lists `src/index.ts` ("serve entrypoint"). Sprint 1 deliberately did
+NOT create it, because S1.1's `dev`/`start` scripts must not point at placeholder code
+(PLAN.md rule 7). `package.json` currently has:
+
+- `dev` -> `tsx src/cli.ts`
+- `start` -> `node dist/cli.js`
+
+and `USAGE` states "Commands not yet available: serve (arrives with Sprint 2)".
+
+**Decision needed:** confirm that `serve` lands in S2.5 (`server/http.ts` + `server/mcp.ts`)
+and that `src/index.ts` is created then. If the human expects `serve` to exist in Sprint 1,
+that is a scope addition, not a bug.
