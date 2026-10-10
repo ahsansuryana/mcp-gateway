@@ -147,6 +147,76 @@ Concretely, proposed for a future sprint with an ADR of its own:
 - Confirm with the SDK team (or the SDK's issue tracker) whether a per-request outbound
   envelope is planned, since (C) becomes unnecessary if it lands.
 
+## FINDING 2026-10-10 (Sprint 7, P7-5) — the SDK already enforces the requested fallback
+
+The human asked for this to be implemented ONLY if it matches the fallback in PLAN.md §5(c):
+*when the downstream request did not declare `elicitation`, return an `isError` tool result
+explaining that the client lacks elicitation support instead of forwarding an `input_required`
+it cannot answer.* The instruction was: if this ADR proposes something different, stop and
+show the difference.
+
+**It proposes something different, and the difference is larger than it looks.**
+
+### ADR 0003 recommends (A) + (E)
+
+(A) keep the static declaration and do nothing per-request; (E) log a `warn` when an upstream
+answers `-32601`. Neither produces a per-request `isError` fallback.
+
+### PLAN.md §5(c) describes the risk, not a fallback
+
+Its exact words: *"The gateway cannot currently narrow that per request."* No `isError`
+behaviour is specified there.
+
+### The SDK already implements the protective behaviour natively
+
+verified: `node_modules/@modelcontextprotocol/server/dist/mcp-DIH4cS6P.mjs` lines 1229-1235 —
+before returning an `input-required` result the seam reads the REQUEST's declared
+capabilities (`this._inputRequestCapabilityView(ctx)`), computes
+`missingClientCapabilities(required, declared)`, and throws
+`MissingRequiredClientCapabilityError` when anything is undeclared.
+
+Measured end to end through the gateway (`spikes/probe-mrtr-downstream.mjs`), with a
+downstream client declaring `capabilities: {}`:
+
+```
+RESULT type     : JSON-RPC ERROR (thrown)
+name            : ProtocolError
+code            : -32021
+message         : Cannot request input 'proceed' (elicitation/create): the request's
+                  client capabilities do not declare the required capability
+```
+
+### What this means
+
+The `input_required` result **never reaches** a client that cannot answer it. The protection
+the human asked for is already in place, delivered as a typed `-32021` whose message states
+exactly the reason.
+
+The only difference is the SHAPE: a typed JSON-RPC error rather than an `isError` tool
+result. Implementing the requested condition would therefore **replace** SDK behaviour
+rather than add to it, and would move a protocol-level condition into D12's tool-result
+channel:
+
+> PLAN.md D12: "Tool-execution failures caused by an upstream (down, timeout, needs auth) are
+> returned as a tool result with `isError: true` ...; protocol-level problems (unknown tool,
+> bad params) are JSON-RPC errors."
+
+A client that did not declare a capability the upstream requires is a protocol-level
+condition, so the SDK's choice is the one consistent with D12.
+
+### Not implemented. Awaiting a human decision.
+
+Implementing it would mean intercepting a typed SDK error and re-shaping it, i.e. exactly the
+"custom compatibility layer" the human asked to be consulted about. No code was changed.
+
+Options for the human:
+
+- **(A) Accept the SDK's behaviour.** Nothing to build. The risk in §5(c) is already
+  contained, just not with the exact error shape originally imagined.
+- **(B) Keep the static declaration AND downgrade the error.** Only if a client is
+  demonstrably unable to handle `-32021`.
+- **(C) Widen the upstream declaration instead.** Not applicable; it is already static.
+
 ## Related
 
 - PLAN.md §5 "MRTR proxy requirements" (a), (b), (c).
