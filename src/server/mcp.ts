@@ -61,6 +61,13 @@ export function buildGatewayMcp(options: BuildMcpServerOptions): BuiltGateway {
 
   const factory = () => {
     const ready = hasReadyUpstream();
+    // D17 (B-24): the gateway's own list-changed capabilities are derived from what the open
+    // upstream subscriptions ACTUALLY honoured, so the downstream `subscriptions/listen`
+    // acknowledgement never claims more than the gateway can relay.
+    const relayed = fanout.supportedTypes();
+    const toolsListChanged = relayed.toolsListChanged === true;
+    const promptsListChanged = relayed.promptsListChanged === true;
+    const resourcesListChanged = relayed.resourcesListChanged === true;
 
     // verified: spikes/node_modules/@modelcontextprotocol/server/dist/createMcpHandler-D4NN8WsG.d.mts
     //   (class Server, ServerOptions.capabilities/cacheHints)
@@ -68,9 +75,9 @@ export function buildGatewayMcp(options: BuildMcpServerOptions): BuiltGateway {
       { name: 'mcp-gateway', version: '0.0.0' },
       {
         capabilities: {
-          tools: { listChanged: true },
-          ...(ready ? { resources: {} } : {}),
-          ...(ready ? { prompts: {} } : {}),
+          tools: { listChanged: toolsListChanged },
+          ...(ready ? { resources: { listChanged: resourcesListChanged } } : {}),
+          ...(ready ? { prompts: { listChanged: promptsListChanged } } : {}),
         },
         instructions: 'Aggregated MCP gateway. Tools and prompts are namespaced as <server>_<name>; resource URIs are rewritten to gw://<server>/<encoded original>.',
       },

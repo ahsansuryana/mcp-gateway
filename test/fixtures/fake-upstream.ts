@@ -34,8 +34,11 @@ export interface FakeOptions {
   onMrtrComplete?: (requestState: unknown) => void;
   /** Called when the progress tool observes an abort (S3.6). */
   onAborted?: () => void;
-  /** Called by the fake's own change publisher, so a test can drive list_changed. */
-  getPublishToolsChanged?: (() => void) | undefined;
+  /**
+   * Declares `tools.listChanged: false` so the server answers `subscriptions/listen` with a
+   * PARTIAL honoured filter (Sprint 3 B-24 / D17).
+   */
+  withoutListChanged?: boolean;
   /** Sent on every tool result, so a test can prove provenance. */
   prefix: string;
   /** Emitted as the server's own `tools/list` cache hint. */
@@ -53,7 +56,10 @@ export async function startFakeUpstream(options: FakeOptions): Promise<FakeUpstr
         // `listChanged: true` is REQUIRED for the fake to honour a `toolsListChanged`
         // subscription: with `false` the server drops the filter and answers the ack with
         // an empty honoured set (verified in spikes/debug-fake.mjs).
-        capabilities: { tools: { listChanged: true } },
+        //
+        // verified: node_modules/@modelcontextprotocol/server/dist/mcp-DIH4cS6P.mjs
+        //   (honoredSubset: a requested flag is dropped unless the server advertises it)
+        capabilities: { tools: { listChanged: options.withoutListChanged !== true } },
         // Every cacheable operation advertises the same hint, so D11's minimum can be
         // exercised on resources/list and prompts/list as well as tools/list.
         cacheHints:

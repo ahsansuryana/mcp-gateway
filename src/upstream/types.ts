@@ -109,7 +109,12 @@ export interface Upstream {
    * verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
    *   (Client.listen(filter, options): Promise<McpSubscription>)
    */
-  listen?(signal: AbortSignal): Promise<{ close: () => Promise<void>; readonly closed: Promise<string> }>;
+  listen?(signal: AbortSignal): Promise<{
+    /** The subset of the requested filter the server agreed to honour. */
+    readonly honoredFilter: Record<string, unknown>;
+    close: () => Promise<void>;
+    readonly closed: Promise<string>;
+  }>;
 
   /**
    * Registers the handlers that deliver `notifications/tools/list_changed`,

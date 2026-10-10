@@ -34,6 +34,23 @@ export interface SubscriptionFanoutDeps {
   notifyToolsChanged: () => void;
 }
 
+/** The notification types a subscription filter can ask for. */
+export interface ListChangedTypes {
+  toolsListChanged?: true;
+  promptsListChanged?: true;
+  resourcesListChanged?: true;
+}
+
+/**
+ * The filter the gateway asks every upstream for.
+ * verified: docs/ref/spec-2026-07-28-basic-patterns-subscriptions.md (Notification Filter)
+ */
+export const REQUESTED_FILTER: ListChangedTypes = {
+  toolsListChanged: true,
+  promptsListChanged: true,
+  resourcesListChanged: true,
+};
+
 export class SubscriptionFanout {
   readonly #deps: SubscriptionFanoutDeps;
   readonly #controller = new AbortController();
@@ -41,7 +58,29 @@ export class SubscriptionFanout {
   #lastPublished: string[] | undefined;
   /** Set when an UPSTREAM pushed a change event in the current debounce window. */
   #upstreamEvent = false;
+  /**
+   * Union of the honoured filters of the OPEN upstream subscriptions.
+   *
+   * verified: docs/ref/spec-2026-07-28-basic-patterns-subscriptions.md ("The `notifications`
+   *   field in the acknowledgment reflects the subset the server agreed to honor"; "The client
+   *   SHOULD check the acknowledged filter against what it requested and handle any
+   *   unsupported types gracefully")
+   * verified: node_modules/@modelcontextprotocol/server/dist/mcp-DIH4cS6P.mjs (honoredSubset:
+   *   a requested flag is dropped unless the server advertises the matching listChanged /
+   *   subscribe capability)
+   */
+  #honored: ListChangedTypes = {};
   #started = false;
+
+  /**
+   * What the gateway can ACTUALLY relay downstream right now: the union of the honoured
+   * filters over the open upstream subscriptions. D17 requires the gateway's own advertised
+   * `listChanged` bits to be derived from this, so a downstream acknowledgement never claims
+   * more than some upstream really honoured.
+   */
+  supportedTypes(): ListChangedTypes {
+    return { ...this.#honored };
+  }
 
   constructor(deps: SubscriptionFanoutDeps) {
     this.#deps = deps;
@@ -70,6 +109,7 @@ export class SubscriptionFanout {
         // (verified in spikes/out-probe-subscriptions.txt).
         upstream.onListChanged?.(() => { this.markDirty(true); });
         const subscription = await upstream.listen(this.#controller.signal);
+        this.#recordHonored(upstream.name, subscription.honoredFilter);
         void subscription.closed.then((how: string) => {
           if (how === 'local') return;
           this.#deps.logger.warn({ upstream: upstream.name, how }, 'upstream subscription closed');
@@ -92,6 +132,33 @@ export class SubscriptionFanout {
       this.markDirty();
     });
   }
+
+  /**
+ * Merges an upstream's acknowledged filter into the union, and WARNS when the server
+ * honoured strictly less than the gateway asked for.
+ *
+ * A partial subscription is normal, not an error: the spec says the acknowledgement reflects
+ * the subset the server agreed to honour, and a client SHOULD degrade gracefully
+ * (verified: docs/ref/spec-2026-07-28-basic-patterns-subscriptions.md, "Acknowledgment").
+ * The gateway therefore keeps the union for capability advertisement and treats a narrower
+ * answer as a partial subscription rather than silently assuming full coverage.
+ */
+#recordHonored(upstreamName: string, honored: ListChangedTypes): void {
+  const dropped = (Object.keys(REQUESTED_FILTER) as (keyof ListChangedTypes)[]).filter(
+    (key) => REQUESTED_FILTER[key] === true && honored[key] !== true,
+  );
+
+  if (dropped.length > 0) {
+    this.#deps.logger.warn(
+      { upstream: upstreamName, dropped, honored },
+      'upstream honoured a partial subscriptions/listen filter',
+    );
+  }
+
+  for (const key of Object.keys(honored) as (keyof ListChangedTypes)[]) {
+    if (honored[key] === true) this.#honored[key] = true;
+  }
+}
 
   /**
    * Marks the merged list as potentially changed.
