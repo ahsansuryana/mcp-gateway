@@ -21,6 +21,15 @@ owns. PLAN.md §3 rule 8: anything out of scope goes here instead of into code.
 | B-12 | `oauth.clientMetadataUrl` for the Client ID Metadata Document path is missing from §6 | `docs/OPEN-QUESTIONS.md` Q-DEVNAMES | S5.3 |
 | B-13 | Confirm `npm audit` at every sprint end (PLAN.md §8) — Sprint 0 result was clean for the spikes tree | PLAN.md §8 | every sprint |
 
+## From Sprint 3
+
+| ID | Item | Origin | Suggested home |
+|---|---|---|---|
+| B-24 | The gateway ignores an upstream's `honoredFilter`. An upstream that answers `subscriptions/listen` with a smaller filter than requested is silently treated as subscribed. Branch on `honoredFilter` and log a warning when it is narrower than asked. | S3.4 | S3.4 follow-up |
+| B-25 | `UpstreamManager.stop()` now emits status transitions so a stop is observable as a merged-list change. `Upstream.stop()` is also the place `RemoteUpstream` could emit directly; today only the manager does, which means a directly-stopped upstream is invisible. | S3.4 | S4.3 |
+| B-26 | The gateway's upstream client declares `capabilities: { elicitation: {} }` because MRTR requires it. If sampling or roots ever need relaying, the same declaration must be extended; both are deprecated in 2026-07-28. | S3.5 | S5 |
+| B-27 | `resources/templates/list` is deliberately not implemented and not advertised (non-goal). A test asserts the string `templates` never appears in the advertised capabilities. | S3.1 | — |
+
 ## Answers still owed by the human (PLAN.md §9)
 
 - **Q1** — support legacy HTTP+SSE upstreams? Sprint 0 evidence: deprecated by the spec,
@@ -51,5 +60,5 @@ owns. PLAN.md §3 rule 8: anything out of scope goes here instead of into code.
 | B-19 | The Inspector CLI, on a tool that returns `isError: true`, exits with a non-zero code and prints a libuv assertion on Windows teardown (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`). The JSON result itself is correct. Not a gateway defect, but it makes Inspector transcripts noisier than expected. | `spikes/out-spike-4.txt` | note only |
 | B-20 | `RemoteUpstream` holds ONE long-lived `Client` per upstream and reuses it for every call. That matches PLAN.md §5 (stateless gateway) but means a long-idle upstream keeps its transport open. Consider an idle-reconnect policy together with S4.3's lifecycle work. | S2.2 | S4.3 |
 | B-21 | `UpstreamManager` retries a `failed` upstream at most once per 30 s, triggered by incoming traffic (S2.1). S4.3 reuses the same rule for stdio upstreams; verify they share one implementation rather than two. | S2.1 / S4.3 | S4.3 |
-| B-22 | The gateway currently never sets `tools.listChanged`, so a `tools/list` consumer must poll or rely on `ttlMs`. S3.4 turns this on. | S2.4 | S3.4 |
+| B-22 | The gateway currently never sets `tools.listChanged`, so a `tools/list` consumer must poll or rely on `ttlMs`. S3.4 turns this on. | S2.4 | S3.4 — **CLOSED in S3.4** |
 | B-23 | `x-mcp-header` tool-parameter mirroring (B-05) is still undecided; the gateway currently forwards `inputSchema` verbatim, including any `x-mcp-header` annotation. A client that honours it will send `Mcp-Param-*` headers the gateway does not validate. | S2.3 | S2.5/S3 |

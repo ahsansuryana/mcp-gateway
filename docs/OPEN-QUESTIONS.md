@@ -9,7 +9,7 @@ Status legend: `BLOCKING` = a Sprint 1+ task cannot start correctly until answer
 
 ---
 
-## Q-MRTRPROXY — BLOCKING (Sprint 3, S3.5)
+## Q-MRTRPROXY — IMPLEMENTED in Sprint 3 (S3.5); PLAN.md §5 needs amending
 
 **What.** PLAN.md §5 `tools/call` says to forward `_meta` entries and to forward an
 `input_required` result unchanged, "including `requestState`". It does **not** say that the
@@ -48,11 +48,27 @@ unchanged, including `requestState`, and keeps no state") is unimplementable as 
 - (C) Ask the SDK whether a transport-level passthrough exists. None was found in the
   `.d.ts` surface.
 
-**Decision needed from:** the human (rule 5, no silent decisions).
+**Implementation (Sprint 3).** `aggregateCallTool` now takes an `extra` argument carrying
+`inputResponses` / `requestState`, and `RemoteUpstream.callTool` re-attaches them as SIBLINGS
+of `arguments` — not inside `_meta` — with `allowInputRequired: true`.
+
+**Second requirement §5 does not mention at all: the gateway's UPSTREAM client must declare
+`elicitation`.** Without it the SDK server seam answers `-32021 MissingRequiredClientCapability`
+to the upstream's own `input_required` result and the gateway never sees it. Found in Sprint 3
+when the raw wire showed `{"result":{"content":[{"type":"text","text":"Upstream 'up' is
+unavailable"}],"isError":true,...}}` instead of the relayed `input_required`.
+
+**E2E proof (Sprint 3):** `test/e2e/sprint3.e2e.test.ts` asserts the upstream saw exactly one
+elicitation round, the final result carries `state=alpha-minted-state`, and the upstream's
+`onMrtrComplete` callback observed `requestState === 'alpha-minted-state'` — byte-exact.
+A second call starts a fresh round, proving the gateway keeps no MRTR state.
+
+**Still needed from the human:** amend PLAN.md §5 so the two requirements above are written
+down. The code follows the evidence; the plan text still does not describe it.
 
 ---
 
-## Q-SUBSFWD — BLOCKING (Sprint 3, S3.4)
+## Q-SUBSFWD — IMPLEMENTED in Sprint 3 (S3.4); policy offered for ratification
 
 **What.** `createMcpHandler`'s `notify` facade publishes ONLY to that handler's own
 subscription streams. Nothing connects an upstream's bus to a downstream handler's bus.
@@ -68,10 +84,25 @@ notifications after upstream publish => ["tools/list_changed"]   <-- unchanged
 events and fans them out") is real work, not a wiring detail. Confirmed surface to use:
 `client.listen(filter)` upstream + `handler.notify.toolsChanged()` downstream.
 
-**Open sub-question.** With N upstreams, does the gateway emit one `toolsListChanged` per
-upstream change, or coalesce? Debounce policy is unspecified in PLAN.md.
+**Implemented policy** (`src/server/subscriptions.ts`, `DEBOUNCE_MS = 250`):
 
-**Decision needed from:** the human (fan-out policy + debounce).
+1. Bursts inside 250 ms coalesce into ONE `notifications/tools/list_changed`.
+2. An UPSTREAM push event is ALWAYS relayed after the recompute — the upstream may have
+   changed a description or a schema that the gateway cannot see in the name set.
+3. A STATUS transition notifies only when the merged name set really changed, so repeated
+   flapping between `ready` and `error` cannot spam clients.
+
+**Two further findings Sprint 3 had to fix, both of which are PLAN.md-level lessons:**
+
+- `Client.listen()` only OPENS the stream. Notifications dispatch to
+  `setNotificationHandler` registrations, so an implementation that calls `listen()` alone
+  silently receives nothing. `Upstream.onListChanged` was added to the contract for this.
+- A server that declares `tools.listChanged: false` answers the `subscriptions/listen` ack
+  with an EMPTY honoured filter and delivers nothing. Consumers must read
+  `honoredFilter`, which the gateway currently does not branch on.
+
+**Decision needed from the human:** ratify or replace the policy above, especially whether an
+upstream push should be relayed unconditionally (point 2) or only when the name set differs.
 
 ---
 
