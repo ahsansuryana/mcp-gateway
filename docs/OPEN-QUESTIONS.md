@@ -404,3 +404,61 @@ The gateway still owns *when* to refresh (the 60s skew); the SDK still owns *how
 
 **No decision needed** unless the human prefers a single `auth()` entry point. Recorded for
 traceability.
+
+---
+
+## Q-CLAUDE-ERA — Claude's authorization spec revision is older than ours (S6.0b)
+
+Found by reading Anthropic's own documentation for Sprint 6.0b
+(`docs/ref/claude-connector-requirements.md` § 1), not assumed.
+
+`https://claude.com/docs/connectors/building` states:
+
+> "Specification version: Claude follows the `2025-03-26`, `2025-06-18`, and `2025-11-25`
+> authorization specifications"
+
+PLAN.md §3 pins this project to **`2026-07-28`**, and every citation in `docs/ref/` comes from
+that revision. Claude's own authentication page links its CIMD requirement to
+`modelcontextprotocol.io/specification/2025-11-25/basic/authorization`.
+
+**Why it matters.** We will be validating inbound tokens for a client that implements an
+earlier revision. Where the revisions differ, we must not assume ours wins:
+
+- `2026-07-28` documents the RFC 9207 `iss` parameter on authorization responses. Nothing in
+  Claude's documentation mentions `iss` in either direction.
+- The `WWW-Authenticate` challenge shape is specified in both, but Claude has additional
+  stricter requirements ours does not state (a `401` is mandatory; the header is ignored on a
+  `200`; only the first `authorization_servers` entry is used).
+
+**What it does NOT block.** Everything Claude documents is implementable under our pinned
+revision; the divergence is in requirements Claude does not state, not in ones we cannot meet.
+
+**Decision needed (human, at Sprint 7 planning):** whether to keep `2026-07-28` as the single
+authority and treat Claude's documented behaviour as a compatibility target, or to make
+`2025-11-25` a second pinned revision for the inbound path only. The first is what this
+sprint assumes.
+
+---
+
+## Q-CLAUDE-GAPS — what Anthropic's docs do not say (S6.0b)
+
+Recorded explicitly rather than guessed, per PLAN.md §3 rule 3.
+
+1. **No `iss` requirement.** Claude's documentation never mentions the RFC 9207 `iss`
+   parameter. Whether Claude emits it, and whether its authorization server does, is unknown.
+   Consequence: the gateway must not *require* `iss` from Claude in a way that would reject it.
+2. **No statement about tokens without `resource`.** Claude sends RFC 8707 `resource`
+   (documented), but nothing says how Claude reacts if a token arrives without it.
+3. **No list of authorization servers known to satisfy the CIMD two-flag rule.** Auth0, Okta,
+   Microsoft Entra, Keycloak and Supabase Auth appear only as examples of hosts serving
+   `/.well-known/openid-configuration`; the docs do not say which satisfy
+   `client_id_metadata_document_supported: true` AND `"none"` in
+   `token_endpoint_auth_methods_supported`.
+4. **`oauth_anthropic_creds` and `custom_connection`** are described but require emailing
+   `mcp-review@anthropic.com`. No self-service path is documented.
+5. **CIMD examples.** The docs reference a "worked CIMD example" on the lazy-authentication
+   page; that page was not read in this sprint and may answer (1) and (3).
+
+**Decision needed (human):** whether to read the remaining referenced pages before choosing an
+authorization server. Sprint 6 does not need it — the fake in-repo authorization server is
+sufficient for S6.3.
