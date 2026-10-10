@@ -13,14 +13,60 @@ import treeKill from 'tree-kill';
 // which terminates the process AND its children; POSIX walks `ps --ppid` to build the tree
 // and signals each pid, so the platform difference is handled by the dependency.
 import { constants } from 'node:os';
+import { execFileSync } from 'node:child_process';
+
+/**
+ * Whether a POSIX process tree can actually be built.
+ *
+ * tree-kill walks the tree with `ps --ppid`, which lives in `procps`. That package is
+ * absent from minimal container images: observed on `node:24-bookworm-slim`, where
+ * `killProcessTree` raised `spawn ps ENOENT` from inside the dependency's own callback,
+ * where a `try/catch` here cannot reach it.
+ *
+ * When it is missing we degrade to killing the direct child, which is the best available
+ * and never worse than the SDK's own behaviour.
+ */
+let posixTreeAvailable: boolean | undefined;
+
+function hasPs(): boolean {
+  if (process.platform === 'win32') return true;
+  posixTreeAvailable ??= (() => {
+    try {
+      execFileSync('ps', ['--version'], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  return posixTreeAvailable;
+}
 
 /**
  * Kills `pid` and every descendant.
  *
  * Returns the outcome rather than throwing: a shutdown path must not fail because a
  * process had already exited on its own.
+ *
+ * `treeOnly` reports that descendants were NOT included, so the caller can log the
+ * degradation rather than silently claiming a full tree kill.
  */
-export function killProcessTree(pid: number): Promise<{ killed: boolean; error?: string }> {
+export function killProcessTree(
+  pid: number,
+): Promise<{ killed: boolean; error?: string; treeOnly?: boolean }> {
+  if (!hasPs()) {
+    try {
+      // verified: nodejs.org/api/process.html#processkillpid-signal
+      process.kill(pid, 'SIGKILL');
+      return Promise.resolve({ killed: true, treeOnly: true });
+    } catch (err) {
+      return Promise.resolve({
+        killed: false,
+        treeOnly: true,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   return new Promise((resolve) => {
     let settled = false;
     const finish = (killed: boolean, error?: string): void => {

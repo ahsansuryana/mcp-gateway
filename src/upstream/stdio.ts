@@ -127,6 +127,14 @@ export class StdioUpstream implements Upstream {
     await this.#teardown().catch(() => undefined);
     if (pid === undefined) return;
     const result = await killProcessTree(pid);
+    if (result.treeOnly) {
+      // `ps` is unavailable, so grandchildren of a wrapper survive. Logged rather than
+      // swallowed: silently claiming a tree kill would be a lie.
+      this.#options.logger.warn(
+        { upstream: this.name, pid },
+        'process tree kill degraded to direct child: ps (procps) is not installed',
+      );
+    }
     if (!result.killed) {
       this.#options.logger.debug(
         { upstream: this.name, pid, reason: result.error },

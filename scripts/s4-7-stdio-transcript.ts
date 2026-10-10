@@ -20,8 +20,8 @@ import { createLogger } from '../src/observability/logger.js';
 const SERVER = resolve('spikes/node_modules/@modelcontextprotocol/server-everything/dist/index.js');
 const OUT = 'spikes/out-s4-7.txt';
 
-const lines = [];
-const log = (...parts) => {
+const lines: string[] = [];
+const log = (...parts: unknown[]): void => {
   const line = parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ');
   lines.push(line);
   process.stdout.write(line + '\n');

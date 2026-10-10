@@ -34,6 +34,23 @@ function local(overrides: Partial<LocalUpstreamConfig> = {}): LocalUpstreamConfi
   };
 }
 
+/**
+ * Whether a POSIX process tree can be walked on this host.
+ *
+ * tree-kill needs `ps` (procps), which minimal container images such as
+ * `node:24-bookworm-slim` do not ship. The gateway degrades to a direct-child kill there,
+ * and the test asserts the behaviour that actually applies instead of pretending.
+ */
+function hasPs(): boolean {
+  if (process.platform === 'win32') return true;
+  try {
+    execFileSync('ps', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** True while `pid` still exists. Windows uses tasklist, POSIX uses signal 0. */
 function isAlive(pid: number): boolean {
   try {
@@ -115,10 +132,18 @@ describe('S4.5 process tree termination', () => {
 
     await upstream.forceStop?.();
 
-    // The whole tree must be gone, not just the process the SDK tracks.
+    // The direct child must always die.
     expect(await waitUntil(() => !isAlive(childPid!), 15_000)).toBe(true);
-    expect(await waitUntil(() => !isAlive(grandchildPid!), 15_000)).toBe(true);
     expect(upstream.status().state).toBe('disabled');
+
+    if (hasPs()) {
+      // The whole tree must be gone, not just the process the SDK tracks.
+      expect(await waitUntil(() => !isAlive(grandchildPid!), 15_000)).toBe(true);
+    } else {
+      // Degraded path: without procps the grandchild survives and the gateway must SAY so.
+      expect(isAlive(grandchildPid!)).toBe(true);
+      expect(lines.join('\n')).toContain('process tree kill degraded to direct child');
+    }
   }, 60_000);
 
   it('killProcessTree is safe on an already-dead pid', async () => {
