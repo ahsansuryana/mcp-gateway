@@ -1,0 +1,6 @@
+{
+  "gateway": { "auth": { "type": "bearer", "keys": ["k-0123456789"] } },
+  "mcp": {
+    "github": { "type": "remote", "url": "https://example.com/mcp", "headers": { "Bad Header": "x" } }
+  }
+}

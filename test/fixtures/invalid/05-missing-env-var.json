@@ -1,0 +1,4 @@
+{
+  "gateway": { "auth": { "type": "bearer", "keys": ["{env:GATEWAY_TEST_VAR_THAT_DOES_NOT_EXIST}"] } },
+  "mcp": {}
+}

@@ -11,7 +11,6 @@ import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser';
 import {
   gatewayConfigSchema,
   validateCrossFieldConfig,
-  validateUpstreamNames,
   type GatewayConfig,
 } from './schema.js';
 import { substitute, SubstitutionError, type SubstituteOptions } from './substitute.js';
@@ -122,26 +121,31 @@ export function parseConfig(raw: string, sourcePath: string, options: Substitute
   const result = gatewayConfigSchema.safeParse(substituted);
   if (!result.success) {
     // verified: https://zod.dev/error-formatting (zod v4 issue shape: path array + message)
-    throw new ConfigErrorList(
-      result.error.issues.map((issue) => ({
-        path: issue.path.length === 0 ? '<root>' : issue.path.join('.'),
-        reason: issue.message,
-      })),
-    );
+    throw new ConfigErrorList(result.error.issues.map(issueToConfigError));
   }
 
-  // Rules that zod's per-field schema cannot express: upstream-NAME shape and the
-  // http-unless-localhost rule (PLAN.md §6).
-  const nameErrors = validateUpstreamNames(result.data.mcp);
-  if (nameErrors.length > 0) {
-    throw new ConfigErrorList(nameErrors.map(splitReason));
-  }
+  // The one rule zod's per-field schema cannot express: plain `http:` for a
+  // non-localhost remote upstream (PLAN.md §6).
   const urlErrors = validateCrossFieldConfig(result.data);
   if (urlErrors.length > 0) {
     throw new ConfigErrorList(urlErrors.map(splitReason));
   }
 
   return { config: result.data, path: sourcePath };
+}
+
+/**
+ * Converts one zod issue to a `ConfigError`.
+ *
+ * A record-key failure carries the real reason on `issue.issues[0].message` and a generic
+ * "Invalid key in record" on the outer message, so the inner one is preferred when present.
+ */
+function issueToConfigError(issue: { path: PropertyKey[]; message: string; issues?: { message: string }[] }): ConfigError {
+  const inner = issue.issues?.[0]?.message;
+  return {
+    path: issue.path.length === 0 ? '<root>' : issue.path.map(String).join('.'),
+    reason: inner ?? issue.message,
+  };
 }
 
 /** `"mcp.Bad_Name: reason"` -> `{ path: 'mcp.Bad_Name', reason: 'reason' }`. */

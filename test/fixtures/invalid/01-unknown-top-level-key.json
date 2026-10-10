@@ -1,0 +1,7 @@
+{
+  "gateway": {
+    "auth": { "type": "bearer", "keys": ["k-0123456789"] }
+  },
+  "mcp": {},
+  "extraKey": true
+}

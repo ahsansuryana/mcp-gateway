@@ -1,0 +1,6 @@
+{
+  "gateway": { "auth": { "type": "bearer", "keys": ["k-0123456789"] } },
+  "mcp": {
+    "Bad_Name": { "type": "remote", "url": "https://example.com/mcp" }
+  }
+}

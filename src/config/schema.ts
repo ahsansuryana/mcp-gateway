@@ -60,8 +60,13 @@ const oauth = z.union([
   }),
 ]);
 
-/** Localhost-class hosts that are allowed to use plain `http:` (PLAN.md §6). */
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+/**
+ * Localhost-class hosts that are allowed to use plain `http:` (PLAN.md §6).
+ * `::1` is listed twice on purpose: `URL.hostname` yields `[::1]` with brackets for an
+ * IPv6 literal, and without them for a bare host.
+ * verified: https://developer.mozilla.org/docs/Web/API/URL/hostname (IPv6 literals keep their brackets)
+ */
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 const remoteUpstream = z.strictObject({
   type: z.literal('remote'),
@@ -116,9 +121,10 @@ const gateway = z.strictObject({
 });
 
 /**
- * PLAN.md §6: an arbitrary JSON object whose KEYS are upstream names. Key-shape rules are
- * applied after parsing (see `validateUpstreamNames`) because JSON Schema object
- * `propertyNames` cannot express a failure with a per-key path.
+ * PLAN.md §6: an arbitrary JSON object whose KEYS are upstream names.
+ * The key regex is enforced by zod's record key check (it also lands in the generated
+ * JSON Schema as `propertyNames`), and the http-unless-localhost rule — which zod cannot
+ * express — is enforced by `validateRemoteUrls`.
  */
 const mcp = z.record(serverName, upstream);
 
@@ -139,25 +145,6 @@ export type GatewaySection = z.infer<typeof gateway>;
 /** PLAN.md §6: `https:` is required unless the host is localhost-class. */
 export function isNonLocalHttpUrl(url: URL): boolean {
   return url.protocol === 'http:' && !LOCAL_HOSTS.has(url.hostname);
-}
-
-/**
- * Produces human-readable, secret-free errors. PLAN.md rule 9: name the key path, never
- * the value. Returns an empty array when the upstream map is fine.
- */
-export function validateUpstreamNames(mcpSection: unknown): string[] {
-  const errors: string[] = [];
-  if (typeof mcpSection !== 'object' || mcpSection === null || Array.isArray(mcpSection)) {
-    return ['mcp: must be an object keyed by upstream name'];
-  }
-  for (const name of Object.keys(mcpSection)) {
-    if (!SERVER_NAME_PATTERN.test(name)) {
-      errors.push(
-        `mcp.${name}: upstream name must match ^[a-z0-9-]{1,24}$ (lowercase, digits, hyphen; no underscore)`,
-      );
-    }
-  }
-  return errors;
 }
 
 /** PLAN.md §6: plain `http:` is only allowed for localhost-class hosts. */
