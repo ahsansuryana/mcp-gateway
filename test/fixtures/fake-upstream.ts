@@ -229,11 +229,33 @@ export async function startFakeUpstream(options: FakeOptions): Promise<FakeUpstr
  * start cannot accidentally collide with a real listener.
  * verified: https://nodejs.org/api/net.html#netserverlistenport-host-backlog-callback
  */
+/**
+ * Hands out a port that was free at the moment it was probed.
+ *
+ * This is inherently racy: the probe is closed before the caller binds, so a parallel
+ * test file can take the port in between. Across a full `vitest run` with many suites
+ * that window was hit often enough to fail a `beforeAll` and skip whole files.
+ *
+ * At minimum, never hand the SAME port to two callers in this process: when the OS is
+ * free to re-assign a recently released port, that reuse is what turns an unrelated
+ * flake into a confusing EADDRINUSE somewhere else.
+ */
+const handedOut = new Set<number>();
+
 export async function unusedPort(): Promise<number> {
-  const probe = http.createServer();
-  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', () => resolve()));
-  const address = probe.address();
-  const port = typeof address === 'object' && address !== null ? address.port : 0;
-  await new Promise<void>((resolve) => probe.close(() => resolve()));
-  return port;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const probe = http.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', () => resolve()));
+    const address = probe.address();
+    const port = typeof address === 'object' && address !== null ? address.port : 0;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+    if (!handedOut.has(port)) {
+      handedOut.add(port);
+      return port;
+    }
+  }
+  // The OS kept re-assigning a port this process already owns; take the last one anyway
+  // rather than failing the caller outright.
+  return handedOut.size;
 }
