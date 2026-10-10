@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcp.example.com/schemas/gateway.schema.json",
+  "title": "mcp-gateway configuration",
+  "description": "Configuration for mcp-gateway. See docs/CONFIG.md. Strings support {env:NAME} and {file:path} substitution.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "gateway": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "default": "0.0.0.0",
+          "type": "string"
+        },
+        "port": {
+          "default": 3000,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "publicUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "default": "bearer",
+              "type": "string",
+              "const": "bearer"
+            },
+            "keys": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "keys"
+          ],
+          "additionalProperties": false
+        },
+        "defaultTimeoutMs": {
+          "default": 30000,
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 600000
+        },
+        "defaultTtlMs": {
+          "default": 30000,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "legacyEra": {
+          "default": "stateless",
+          "type": "string",
+          "enum": [
+            "stateless",
+            "reject"
+          ]
+        }
+      },
+      "required": [
+        "auth"
+      ],
+      "additionalProperties": false
+    },
+    "mcp": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9-]{1,24}$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "remote"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "headers": {
+                "default": {},
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "oauth": {
+                "anyOf": [
+                  {
+                    "type": "boolean",
+                    "const": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "clientId": {
+                        "type": "string"
+                      },
+                      "clientSecret": {
+                        "type": "string"
+                      },
+                      "scope": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "timeout": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 600000
+              }
+            },
+            "required": [
+              "type",
+              "url"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "local"
+              },
+              "command": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "environment": {
+                "default": {},
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "timeout": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 600000
+              },
+              "startupTimeoutMs": {
+                "default": 60000,
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "idleTimeoutMs": {
+                "default": 300000,
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "type",
+              "command"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "gateway",
+    "mcp"
+  ],
+  "additionalProperties": false
+}

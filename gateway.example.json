@@ -1,0 +1,46 @@
+{
+  "$schema": "./gateway.schema.json",
+  // mcp-gateway example configuration. Copy to gateway.json and edit.
+  // Never commit a gateway.json that holds real secrets (PLAN.md rule 10).
+
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 3000,
+    "publicUrl": "https://mcp.example.com",
+    "auth": {
+      "type": "bearer",
+      // PLAN.md D9: static bearer keys, compared with crypto.timingSafeEqual on
+      // SHA-256 digests. Values are substituted from the environment (D7).
+      "keys": ["{env:GATEWAY_API_KEY}"]
+    },
+    "defaultTimeoutMs": 30000,
+    "defaultTtlMs": 30000,
+    // Protocol-era posture. 'stateless' (default) also serves 2025-era clients.
+    // See docs/adr/0002-protocol-compatibility.md.
+    "legacyEra": "stateless"
+  },
+
+  "mcp": {
+    "github": {
+      "type": "remote",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer {env:GITHUB_TOKEN}"
+      },
+      "enabled": true,
+      "timeout": 30000
+    },
+
+    "fs": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"],
+      "environment": {
+        "FOO": "{env:FOO}"
+      },
+      "enabled": true,
+      "timeout": 30000,
+      "startupTimeoutMs": 60000,
+      "idleTimeoutMs": 300000
+    }
+  }
+}
