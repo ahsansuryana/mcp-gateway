@@ -4,7 +4,8 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'spikes/**', 'coverage/**'],
+    // Plain .mjs fixtures are executed by `node`, not type-checked or linted.
+    ignores: ['dist/**', 'node_modules/**', 'spikes/**', 'coverage/**', 'test/fixtures/**/*.mjs'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
