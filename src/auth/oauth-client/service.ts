@@ -16,6 +16,21 @@ import type { TokenStore } from './token-store.js';
 /** The path the authorization server redirects back to. */
 export const CALLBACK_PATH = '/oauth/callback';
 
+/**
+ * PLAN.md S5.5: refresh this many milliseconds BEFORE the token actually expires.
+ *
+ * A refresh attempted at the expiry instant races the request it is meant to protect: the
+ * clock, the network and the AS disagree by enough to land on the wrong side. 60s is the
+ * figure PLAN.md specifies.
+ */
+export const REFRESH_SKEW_MS = 60_000;
+
+/** Below this remaining lifetime the token is refreshed rather than reused. */
+export function needsRefresh(expiresAt: number | undefined, now: number): boolean {
+  if (expiresAt === undefined) return false;
+  return expiresAt - REFRESH_SKEW_MS <= now;
+}
+
 export interface OAuthServiceOptions {
   config: GatewayConfig;
   store: TokenStore;
@@ -210,6 +225,50 @@ export class OAuthService {
       'upstream authorization completed',
     );
     return { upstreamName: found.upstreamName, method: outcome.method };
+  }
+
+  /**
+   * PLAN.md S5.5: refreshes the stored access token when it is within the skew window.
+   *
+   * Returns true when a NEW token was obtained. Returns false — without throwing — when
+   * there is nothing to do or when the refresh failed: the caller moves the upstream to
+   * `auth_required`, which is the state the spec's error table already gives to "token
+   * invalid".
+   *
+   * verified: docs/ref/spec-2026-07-28-basic-authorization-index.md lines 323 — 401 means
+   *   "Authorization required or token invalid".
+   */
+  async refreshIfNeeded(name: string, issuer?: string): Promise<boolean> {
+    const provider = this.providerFor(name);
+    if (provider === undefined || issuer === undefined) return false;
+
+    const record = await this.#options.store.get(name, issuer);
+    // MUST NOT assume refresh tokens will be issued.
+    // verified: docs/ref/spec-2026-07-28-basic-authorization-index.md line 311
+    if (record === undefined || record.refreshToken === undefined) return false;
+
+    const now = (this.#options.now ?? Date.now)();
+    if (!needsRefresh(record.expiresAt, now)) return false;
+
+    provider.setIssuer(issuer);
+    provider.restoreTokens(record);
+
+    try {
+      const outcome = await runAuthorization(provider, {}, this.#options.logger);
+      return outcome.result === 'AUTHORIZED';
+    } catch (err) {
+      // The failure reason is safe to log: SDK OAuth errors name the endpoint and the
+      // OAuth error code, never the token. The token itself is never interpolated.
+      this.#options.logger.warn(
+        {
+          upstream: name,
+          reason: err instanceof Error ? err.message : String(err),
+        },
+        'refresh failed; upstream needs authorization again',
+      );
+      await this.#options.store.delete(name, issuer);
+      return false;
+    }
   }
 
   /**

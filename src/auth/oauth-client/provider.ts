@@ -236,6 +236,32 @@ export class GatewayOAuthProvider implements OAuthClientProvider {
     await this.#options.store.delete(this.#options.upstreamName, issuer);
   }
 
+  /**
+   * Seeds the in-memory token set from the store, so the SDK's `auth()` takes its refresh
+   * branch instead of starting a new authorization.
+   *
+   * verified: node_modules/@modelcontextprotocol/client/dist/index.d.mts (auth) — with no
+   *   authorizationCode, `auth` "runs discovery and either refreshes or initiates
+   *   redirect", so a prior token set must be visible through `tokens()`.
+   */
+  restoreTokens(record: {
+    accessToken: string;
+    refreshToken?: string;
+    tokenType?: string;
+    scope?: string;
+    expiresAt?: number;
+  }): void {
+    this.#lastTokens = {
+      access_token: record.accessToken,
+      token_type: record.tokenType ?? 'Bearer',
+      ...(record.refreshToken === undefined ? {} : { refresh_token: record.refreshToken }),
+      ...(record.scope === undefined ? {} : { scope: record.scope }),
+      ...(record.expiresAt === undefined
+        ? {}
+        : { expires_in: Math.max(0, Math.round((record.expiresAt - Date.now()) / 1000)) }),
+    };
+  }
+
   /** Records the resolved issuer before the flow runs. */
   setIssuer(issuer: string | undefined): void {
     this.#lastIssuer = issuer;

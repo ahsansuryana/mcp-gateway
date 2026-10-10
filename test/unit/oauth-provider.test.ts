@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 import { GatewayOAuthProvider } from '../../src/auth/oauth-client/provider.js';
+import { REFRESH_SKEW_MS, needsRefresh } from '../../src/auth/oauth-client/service.js';
 import { TokenStore, TOKEN_KEY_BYTES } from '../../src/auth/oauth-client/token-store.js';
 import { createLogger } from '../../src/observability/logger.js';
 
@@ -219,5 +220,55 @@ describe('S5.3 redirect capture', () => {
     expect(provider.authorizationUrl).toBeUndefined();
     provider.redirectToAuthorization(new URL('https://auth.example.com/authorize?x=1'));
     expect(provider.authorizationUrl?.href).toBe('https://auth.example.com/authorize?x=1');
+  });
+});
+describe('S5.5 refresh window', () => {
+  it('needsRefresh is true inside the 60s skew and false outside it', () => {
+    const now = 1_700_000_000_000;
+    // PLAN.md S5.5: refresh BEFORE expiry with a 60s skew.
+    expect(needsRefresh(now + 30_000, now)).toBe(true);
+    expect(needsRefresh(now + 59_000, now)).toBe(true);
+    expect(needsRefresh(now + 60_001, now)).toBe(false);
+    expect(needsRefresh(now + 3_600_000, now)).toBe(false);
+  });
+
+  it('a token with no reported expiry is never proactively refreshed', () => {
+    // An AS that omits expires_in gives us no basis for a refresh decision; refreshing
+    // anyway would burn the refresh token on every request.
+    expect(needsRefresh(undefined, Date.now())).toBe(false);
+  });
+
+  it('REFRESH_SKEW_MS is the 60 seconds PLAN.md specifies', () => {
+    expect(REFRESH_SKEW_MS).toBe(60_000);
+  });
+});
+
+describe('S5.5 restoreTokens', () => {
+  it('seeds the token set the SDK refresh branch needs', () => {
+    const store = makeStore();
+    const provider = makeProvider(store);
+    provider.restoreTokens({
+      accessToken: 'old-access',
+      refreshToken: 'old-refresh',
+      tokenType: 'Bearer',
+      scope: 'files:read',
+      expiresAt: Date.now() + 10_000,
+    });
+    // The transport's per-request bearer read must see it without a store round trip.
+    return expect(provider.tokens()).resolves.toMatchObject({
+      access_token: 'old-access',
+      refresh_token: 'old-refresh',
+      scope: 'files:read',
+    });
+  });
+
+  it('a remaining lifetime of zero or less yields expires_in 0, never a negative value', () => {
+    const provider = makeProvider(makeStore());
+    provider.restoreTokens({
+      accessToken: 'a',
+      refreshToken: 'r',
+      expiresAt: Date.now() - 60_000,
+    });
+    return expect(provider.tokens()).resolves.toMatchObject({ expires_in: 0 });
   });
 });
