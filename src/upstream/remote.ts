@@ -60,9 +60,20 @@ export class RemoteUpstream implements Upstream {
       // verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
       //   (ClientOptions.versionNegotiation; mode 'auto' probes server/discover and falls
       //    back to initialize, so a 2025-era upstream still works)
+      // The upstream client MUST declare `elicitation` even though the gateway never fulfils an
+      // elicitation itself. On an `input_required` result the SDK server seam checks the
+      // REQUEST's declared client capabilities and answers `-32021` for anything undeclared,
+      // which would break MRTR passthrough (S3.5) before the gateway ever sees the result.
+      // verified: spikes/node_modules/@modelcontextprotocol/server/dist/createMcpHandler-D4NN8WsG.d.mts
+      //   (Server._invokeInputRequiredCapableHandler: "every embedded request must be covered
+      //    by the capabilities declared on the request's envelope ... -32021")
       this.#client = new Client(
         { name: 'mcp-gateway', version: '0.0.0' },
-        { versionNegotiation: { mode: 'auto' }, defaultCacheTtlMs: 0 },
+        {
+          versionNegotiation: { mode: 'auto' },
+          defaultCacheTtlMs: 0,
+          capabilities: { elicitation: {} },
+        },
       );
 
       await this.#client.connect(this.#transport, { timeout: this.timeoutMs });
@@ -178,6 +189,32 @@ export class RemoteUpstream implements Upstream {
       { toolsListChanged: true, promptsListChanged: true, resourcesListChanged: true },
       { signal, timeout: this.timeoutMs },
     );
+  }
+
+  /**
+   * Registers the change-notification handlers. `listen()` only opens the stream; these are
+   * what actually dispatch the notifications onto it (Sprint 3 S3.4).
+   *
+   * verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
+   *   (Client.setNotificationHandler(method, handler))
+   */
+  onListChanged(handler: () => void): () => void {
+    const client = this.#requireClient();
+    const methods = [
+      'notifications/tools/list_changed',
+      'notifications/prompts/list_changed',
+      'notifications/resources/list_changed',
+    ] as const;
+
+    for (const method of methods) {
+      client.setNotificationHandler(method, () => {
+        handler();
+      });
+    }
+    return () => {
+      // `removeNotificationHandler` is not part of the public surface used here; the client
+      // is torn down with the upstream, so no explicit teardown is required.
+    };
   }
 
   // -------------------------------------------------------------------------

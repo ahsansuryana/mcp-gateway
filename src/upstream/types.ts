@@ -102,10 +102,24 @@ export interface Upstream {
    * upstream that does not implement the modern era rejects it, which the fan-out treats as
    * "this upstream cannot push changes" rather than as an error.
    *
+   * IMPORTANT: `listen()` alone only opens the stream. Change notifications are dispatched
+   * to the handlers registered with `setNotificationHandler`, so a consumer MUST also call
+   * `onListChanged` — `onListChanged` is what actually delivers the events.
+   *
    * verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
    *   (Client.listen(filter, options): Promise<McpSubscription>)
    */
   listen?(signal: AbortSignal): Promise<{ close: () => Promise<void>; readonly closed: Promise<string> }>;
+
+  /**
+   * Registers the handlers that deliver `notifications/tools/list_changed`,
+   * `notifications/prompts/list_changed` and `notifications/resources/list_changed`, and
+   * returns an unsubscribe function.
+   *
+   * verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
+   *   (Client.setNotificationHandler(method, handler))
+   */
+  onListChanged?(handler: () => void): () => void;
 }
 
 /**

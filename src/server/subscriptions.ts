@@ -10,14 +10,13 @@
 //
 // Q-SUBSFWD: PLAN.md does not define the fan-out policy. The policy implemented here, and
 // offered for ratification, is:
-//   1. an upstream event only *marks* the merged list dirty;
-//   2. the gateway then RECOMPUTES the namespaced tool-name set and emits
-//      `toolsListChanged` only when that set actually differs from the last published one;
-//   3. bursts inside `DEBOUNCE_MS` are coalesced into one notification;
-//   4. an upstream's status transition (ready <-> error/failed/disabled) marks the list
-//      dirty too, which is how PLAN.md's "changes the merged list" is realised.
-// This makes the notification count equal the number of real list changes, which is what a
-// client can actually use.
+//   1. bursts inside `DEBOUNCE_MS` are coalesced into one notification;
+//   2. an UPSTREAM push event is always relayed after the recompute, because the upstream may
+//      have changed a description or a schema that the gateway cannot see in the name set;
+//   3. an upstream STATUS transition notifies only when the merged name set really changed,
+//      so repeated flapping between `ready` and `error` cannot spam clients;
+//   4. that is how PLAN.md's "the gateway also emits toolsListChanged when an upstream's
+//      status transitions change the merged list" is realised.
 
 import type { Logger } from '../observability/logger.js';
 import type { UpstreamManager } from '../upstream/manager.js';
@@ -40,6 +39,8 @@ export class SubscriptionFanout {
   readonly #controller = new AbortController();
   #timer: NodeJS.Timeout | undefined;
   #lastPublished: string[] | undefined;
+  /** Set when an UPSTREAM pushed a change event in the current debounce window. */
+  #upstreamEvent = false;
   #started = false;
 
   constructor(deps: SubscriptionFanoutDeps) {
@@ -64,6 +65,10 @@ export class SubscriptionFanout {
     for (const upstream of this.#deps.manager.all()) {
       if (upstream.status().state !== 'ready' || upstream.listen === undefined) continue;
       try {
+        // Register the notification handlers FIRST: `listen()` only opens the stream, and a
+        // notification arriving before a handler exists would be dropped
+        // (verified in spikes/out-probe-subscriptions.txt).
+        upstream.onListChanged?.(() => { this.markDirty(true); });
         const subscription = await upstream.listen(this.#controller.signal);
         void subscription.closed.then((how: string) => {
           if (how === 'local') return;
@@ -88,8 +93,17 @@ export class SubscriptionFanout {
     });
   }
 
-  /** Marks the merged list as potentially changed; the recompute decides whether to notify. */
-  markDirty(): void {
+  /**
+   * Marks the merged list as potentially changed.
+   *
+   * `fromUpstream` distinguishes the two sources:
+   *   - an UPSTREAM push event is always relayed (debounced), because the upstream may have
+   *     changed a description, an input schema or anything else the gateway cannot see;
+   *   - a STATUS transition only notifies when the merged name set really changed, so
+   *     repeated flapping between `ready` and `error` cannot spam clients.
+   */
+  markDirty(fromUpstream = false): void {
+    if (fromUpstream) this.#upstreamEvent = true;
     if (this.#timer !== undefined) return;
     this.#timer = setTimeout(() => {
       this.#timer = undefined;
@@ -98,8 +112,11 @@ export class SubscriptionFanout {
     this.#timer.unref?.();
   }
 
-  /** Forces an immediate recompute+notify, bypassing the debounce. Used by tests. */
+  /** Recomputes and, when warranted, publishes `notifications/tools/list_changed`. */
   async flush(): Promise<boolean> {
+    const upstreamEvent = this.#upstreamEvent;
+    this.#upstreamEvent = false;
+
     let next: string[];
     try {
       next = await this.#deps.computeToolNames();
@@ -113,10 +130,13 @@ export class SubscriptionFanout {
 
     const previous = this.#lastPublished;
     this.#lastPublished = next;
-    if (previous !== undefined && sameSet(previous, next)) return false;
+    const changed = previous === undefined || !sameSet(previous, next);
 
-    this.#deps.notifyToolsChanged();
-    return true;
+    if (changed || upstreamEvent) {
+      this.#deps.notifyToolsChanged();
+      return true;
+    }
+    return false;
   }
 
   stop(): Promise<void> {

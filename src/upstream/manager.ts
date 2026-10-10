@@ -38,6 +38,8 @@ interface Entry {
   /** Set while a backoff timer is pending. */
   retryHandle: unknown;
   lastFailureAt: number;
+  /** Last state handed to the status listeners, so repeats are suppressed. */
+  lastEmittedState: string | undefined;
 }
 
 export class UpstreamManager {
@@ -53,7 +55,13 @@ export class UpstreamManager {
     for (const [name, upstreamConfig] of Object.entries(config.mcp)) {
       if (!upstreamConfig.enabled) continue;
       const upstream = this.#create(name, upstreamConfig);
-      this.#entries.set(name, { upstream, failures: 0, retryHandle: undefined, lastFailureAt: 0 });
+      this.#entries.set(name, {
+        upstream,
+        failures: 0,
+        retryHandle: undefined,
+        lastFailureAt: 0,
+        lastEmittedState: undefined,
+      });
     }
   }
 
@@ -87,6 +95,19 @@ export class UpstreamManager {
     }
   }
 
+  /**
+   * Emits only on a REAL state change.
+   *
+   * Without this guard a failing upstream re-emitted `error` on every retry, and each
+   * emission made the subscription fan-out recompute the tool list, which in turn forced
+   * another start attempt: a self-sustaining loop that never backed off.
+   */
+  #emitStatusOnChange(entry: Entry, state: string): void {
+    if (entry.lastEmittedState === state) return;
+    entry.lastEmittedState = state;
+    this.#emitStatus(entry.upstream.name, state);
+  }
+
   get(name: string): Upstream | undefined {
     return this.#entries.get(name)?.upstream;
   }
@@ -113,6 +134,9 @@ export class UpstreamManager {
     for (const entry of this.#entries.values()) {
       this.#clearRetry(entry);
       await entry.upstream.stop().catch(() => undefined);
+      // Stopping is a real state change and must reach the listeners, otherwise a stop()
+      // would not be observable as a change to the merged list.
+      this.#emitStatusOnChange(entry, entry.upstream.status().state);
     }
   }
 
@@ -155,6 +179,10 @@ export class UpstreamManager {
       const elapsed = this.#now() - entry.lastFailureAt;
       if (elapsed < FAILED_RETRY_INTERVAL_MS) return;
     }
+    // While a backoff timer is armed, incoming traffic must NOT force an early attempt.
+    // Without this the retry timer and the request path raced each other and the upstream
+    // was hammered every few hundred milliseconds regardless of the backoff.
+    if (entry.retryHandle !== undefined) return;
     await this.#startEntry(entry);
   }
 
@@ -162,12 +190,14 @@ export class UpstreamManager {
     this.#clearRetry(entry);
     await entry.upstream.start().catch(() => undefined);
     const state = entry.upstream.status().state;
-    this.#emitStatus(entry.upstream.name, state);
+    this.#emitStatusOnChange(entry, state);
     if (state === 'ready') {
       entry.failures = 0;
       return;
     }
     if (state === 'disabled') return;
+    // A failed start counts as a failure, otherwise the backoff never grows.
+    entry.failures += 1;
     entry.lastFailureAt = this.#now();
     this.#scheduleRetry(entry);
   }
