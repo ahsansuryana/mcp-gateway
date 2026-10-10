@@ -96,11 +96,11 @@ export function configSummary(config: {
       Object.entries(upstreams).map(([name, entry]) => {
         const kind =
           entry !== null && typeof entry === 'object' && 'type' in entry
-            ? String((entry as { type: unknown }).type)
+            ? String((entry).type)
             : 'unknown';
         const enabled =
           entry !== null && typeof entry === 'object' && 'enabled' in entry
-            ? Boolean((entry as { enabled: unknown }).enabled)
+            ? Boolean((entry).enabled)
             : undefined;
         return [name, { type: kind, enabled }];
       }),
