@@ -255,17 +255,10 @@ get a restricted CORS allowlist, and what the allowlist is.
 
 ---
 
-## Q-SERVE-CMD — NON-BLOCKING (Sprint 2)
+## Q-SERVE-CMD — RESOLVED in Sprint 2
 
-**What.** PLAN.md §5 lists `src/index.ts` ("serve entrypoint"). Sprint 1 deliberately did
-NOT create it, because S1.1's `dev`/`start` scripts must not point at placeholder code
-(PLAN.md rule 7). `package.json` currently has:
-
-- `dev` -> `tsx src/cli.ts`
-- `start` -> `node dist/cli.js`
-
-and `USAGE` states "Commands not yet available: serve (arrives with Sprint 2)".
-
-**Decision needed:** confirm that `serve` lands in S2.5 (`server/http.ts` + `server/mcp.ts`)
-and that `src/index.ts` is created then. If the human expects `serve` to exist in Sprint 1,
-that is a scope addition, not a bug.
+Sprint 1 deliberately did not create `src/index.ts` (PLAN.md rule 7 forbids placeholder
+code behind a `dev`/`start` script). Sprint 2 S2.5 created it and it wires the full stack:
+`loadConfig` -> `createLogger` -> `UpstreamManager` -> `buildHttpApp` -> listen, with
+SIGINT/SIGTERM shutdown. The gateway is demonstrably serving (see
+`spikes/out-spike-4.txt` and the 20-test E2E suite).

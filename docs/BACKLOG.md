@@ -43,3 +43,13 @@ owns. PLAN.md §3 rule 8: anything out of scope goes here instead of into code.
 | B-16 | Regenerate `gateway.schema.json` in CI and fail the build on drift, so the committed schema can never diverge from `src/config/schema.ts`. | S1.5 | S7.5 |
 | B-17 | The dev-time Node floor is `>=20.19.0` (ESLint 10's `engines`), above the SDK's `>=20`. If a Node 20.0–20.18 target is ever required, ESLint must be pinned to v9. Recorded in `package.json#engines`. | S1.1 | — |
 | B-18 | `substitute()` deep-copies every plain object and array it walks. That is correct for a config document but means callers must not rely on object identity after substitution. | S1.2 | — |
+
+## From Sprint 2
+
+| ID | Item | Origin | Suggested home |
+|---|---|---|---|
+| B-19 | The Inspector CLI, on a tool that returns `isError: true`, exits with a non-zero code and prints a libuv assertion on Windows teardown (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`). The JSON result itself is correct. Not a gateway defect, but it makes Inspector transcripts noisier than expected. | `spikes/out-spike-4.txt` | note only |
+| B-20 | `RemoteUpstream` holds ONE long-lived `Client` per upstream and reuses it for every call. That matches PLAN.md §5 (stateless gateway) but means a long-idle upstream keeps its transport open. Consider an idle-reconnect policy together with S4.3's lifecycle work. | S2.2 | S4.3 |
+| B-21 | `UpstreamManager` retries a `failed` upstream at most once per 30 s, triggered by incoming traffic (S2.1). S4.3 reuses the same rule for stdio upstreams; verify they share one implementation rather than two. | S2.1 / S4.3 | S4.3 |
+| B-22 | The gateway currently never sets `tools.listChanged`, so a `tools/list` consumer must poll or rely on `ttlMs`. S3.4 turns this on. | S2.4 | S3.4 |
+| B-23 | `x-mcp-header` tool-parameter mirroring (B-05) is still undecided; the gateway currently forwards `inputSchema` verbatim, including any `x-mcp-header` annotation. A client that honours it will send `Mcp-Param-*` headers the gateway does not validate. | S2.3 | S2.5/S3 |
