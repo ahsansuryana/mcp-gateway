@@ -7,6 +7,7 @@ import { originValidation } from '@modelcontextprotocol/express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 
 import { createBearerAuth } from './auth.js';
+import type { OAuthService } from '../auth/oauth-client/service.js';
 import { buildGatewayMcp } from './mcp.js';
 import { aggregateCallTool, type ToolsAggregatorDeps } from '../aggregate/tools.js';
 import type { Logger } from '../observability/logger.js';
@@ -23,6 +24,11 @@ export interface BuildHttpOptions {
   allowedOriginHostnames?: readonly string[];
   /** Injectable for tests. */
   now?: () => number;
+  /**
+   * PLAN.md S5.4. Absent when no upstream configures `oauth`, in which case the two OAuth
+   * routes are not registered at all rather than answering 404 for a feature nobody uses.
+   */
+  oauth?: OAuthService;
 }
 
 export interface HttpApp {
@@ -68,6 +74,68 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
   });
 
   const auth = createBearerAuth(config.gateway.auth.keys);
+
+  // --- PLAN.md S5.4: upstream OAuth routes -------------------------------------
+  // Both sit behind the gateway's own bearer key: an unauthenticated caller must not be
+  // able to start or complete an authorization for an operator's upstream.
+  if (options.oauth !== undefined) {
+    const oauth = options.oauth;
+
+    app.get('/admin/oauth/:name/start', (req: Request, res: Response) => {
+      const outcome = auth.authorize(req.headers.authorization);
+      if (!outcome.ok) {
+        logger.warn({ reason: outcome.reason }, 'unauthenticated GET /admin/oauth/:name/start');
+        res.setHeader('WWW-Authenticate', 'Bearer');
+        res.status(401).json({ error: 'unauthorized' });
+        return;
+      }
+      const name = String(req.params['name'] ?? '');
+      if (!oauth.isOAuthUpstream(name)) {
+        res.status(404).json({ error: `upstream '${name}' has no oauth configuration` });
+        return;
+      }
+      void oauth
+        .start(name)
+        .then((result) => {
+          if (result.authorized) {
+            res.status(200).json({ upstream: name, authorized: true, method: result.method });
+            return;
+          }
+          // 302 to the authorization server. The URL carries `state`, `code_challenge` and
+          // `resource`; none of them is a secret the gateway must keep to itself, and none
+          // is logged here.
+          res.redirect(302, result.url ?? '/status');
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          // OAuthServiceError messages are written to never contain a token, code or
+          // client secret (src/auth/oauth-client/service.ts).
+          logger.warn({ upstream: name, reason: message }, 'could not start upstream authorization');
+          res.status(502).json({ error: message });
+        });
+    });
+
+    app.get('/oauth/callback', (req: Request, res: Response) => {
+      const query = req.query as Record<string, string | undefined>;
+      const errorDescription = typeof query['error_description'] === 'string' ? query['error_description'] : undefined;
+      void oauth
+        .callback({
+          ...(typeof query['code'] === 'string' ? { code: query['code'] } : {}),
+          ...(typeof query['state'] === 'string' ? { state: query['state'] } : {}),
+          ...(typeof query['iss'] === 'string' ? { iss: query['iss'] } : {}),
+          ...(typeof query['error'] === 'string' ? { error: query['error'] } : {}),
+          ...(errorDescription === undefined ? {} : { errorDescription }),
+        })
+        .then((result) => {
+          res.status(200).json({ upstream: result.upstreamName, authorized: true });
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          logger.warn({ reason: message }, 'upstream OAuth callback failed');
+          res.status(400).json({ error: message });
+        });
+    });
+  }
 
   // D9: `GET /status` requires auth.
   app.get('/status', (req: Request, res: Response) => {

@@ -58,6 +58,16 @@ export interface Upstream {
   status(): UpstreamStatusInfo;
 
   /**
+   * PLAN.md S5.4: the local gateway route that starts authorization for this upstream, shown
+   * by `/status` while the upstream is `auth_required`. `undefined` for upstreams that do
+   * not use OAuth.
+   *
+   * It is deliberately a LOCAL path, never a public hostname: Q4 is open and no hostname may
+   * be invented (docs/OPEN-QUESTIONS.md).
+   */
+  readonly oauthStartUrl: string | undefined;
+
+  /**
    * Subscribes to state changes this upstream makes on its own.
    *
    * The manager needs this: a stdio child can exit at any moment, and only the upstream

@@ -137,9 +137,17 @@ export function secretsFromConfig(config: {
   for (const entry of Object.values(config.mcp ?? {})) {
     if (entry === null || typeof entry !== 'object') continue;
     const headers = (entry as { headers?: unknown }).headers;
-    if (headers === null || typeof headers !== 'object') continue;
-    for (const value of Object.values(headers as Record<string, unknown>)) {
-      if (typeof value === 'string') values.push(value);
+    if (headers !== null && typeof headers === 'object') {
+      for (const value of Object.values(headers as Record<string, unknown>)) {
+        if (typeof value === 'string') values.push(value);
+      }
+    }
+    // PLAN.md S5.4: the OAuth client secret is a literal secret like any header value. It
+    // must be registered for redaction BEFORE any logger can print it.
+    const oauth = (entry as { oauth?: unknown }).oauth;
+    if (oauth !== null && typeof oauth === 'object') {
+      const secret = (oauth as { clientSecret?: unknown }).clientSecret;
+      if (typeof secret === 'string') values.push(secret);
     }
   }
   return values;

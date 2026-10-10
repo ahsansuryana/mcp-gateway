@@ -79,6 +79,9 @@ export class StdioUpstream implements Upstream {
     this.#status = { state: 'disabled', since: this.#now() };
   }
 
+  /** A stdio upstream never uses OAuth: it takes credentials from its environment (D13). */
+  readonly oauthStartUrl = undefined;
+
   onStatusChange(listener: (state: string) => void): () => void {
     this.#statusListeners.add(listener);
     return () => {

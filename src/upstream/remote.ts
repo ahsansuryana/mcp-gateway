@@ -11,6 +11,8 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/server';
 
 import { scrubSecrets } from '../observability/logger.js';
 import type { RemoteUpstreamConfig } from '../config/schema.js';
+import type { OAuthClientProvider } from '@modelcontextprotocol/client';
+
 import type {
   ListChangedKind,
   ToolListResult,
@@ -24,6 +26,16 @@ export interface RemoteUpstreamOptions {
   secrets?: readonly string[];
   /** Injectable for tests; defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * PLAN.md S5.4: the OAuth client provider for this upstream. Present only when the
+   * upstream's config has `oauth`, so a plain remote upstream is unaffected.
+   */
+  authProvider?: OAuthClientProvider;
+  /**
+   * Called when the upstream answers 401 and no usable credential exists. The manager uses
+   * this to move the upstream to `auth_required` so its tools disappear from `tools/list`.
+   */
+  onAuthRequired?: (reason: string) => void;
 }
 
 const READY: UpstreamStatusInfo = { state: 'starting', since: 0 };
@@ -36,6 +48,7 @@ export class RemoteUpstream implements Upstream {
   readonly #config: RemoteUpstreamConfig;
   readonly #secrets: readonly string[];
   readonly #now: () => number;
+  readonly #options: RemoteUpstreamOptions;
 
   #transport: StreamableHTTPClientTransport | undefined;
   #client: Client | undefined;
@@ -47,6 +60,17 @@ export class RemoteUpstream implements Upstream {
     this.timeoutMs = config.timeout ?? defaultTimeoutMs;
     this.#secrets = options.secrets ?? [];
     this.#now = options.now ?? Date.now;
+    this.#options = options;
+  }
+
+  /**
+   * PLAN.md S5.4: the operator-facing path that begins authorization. A local path only —
+   * Q4 is open, so no public hostname is constructed here.
+   */
+  get oauthStartUrl(): string | undefined {
+    return this.#options.authProvider === undefined
+      ? undefined
+      : `/admin/oauth/${encodeURIComponent(this.name)}/start`;
   }
 
   onStatusChange(listener: (state: string) => void): () => void {
@@ -68,6 +92,12 @@ export class RemoteUpstream implements Upstream {
       //   (StreamableHTTPClientTransportOptions.requestInit; transport-managed headers win)
       this.#transport = new StreamableHTTPClientTransport(new URL(this.#config.url), {
         requestInit: { headers: { ...this.#config.headers } },
+        // S5.4: the SDK attaches the bearer token from the provider on every request.
+        // verified: node_modules/@modelcontextprotocol/client/dist/index.d.mts
+        //   ("Transports accept OAuthClientProvider directly via the authProvider option")
+        ...(this.#options.authProvider === undefined
+          ? {}
+          : { authProvider: this.#options.authProvider }),
       });
 
       // verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts

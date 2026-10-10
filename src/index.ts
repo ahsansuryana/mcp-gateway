@@ -11,6 +11,10 @@ import { configSummary } from './observability/redact.js';
 import { UpstreamManager } from './upstream/manager.js';
 import { EXIT_INVALID, EXIT_OK } from './cli.js';
 import { ConfigErrorList } from './config/load.js';
+import type { GatewayConfig } from './config/schema.js';
+import { OAuthService } from './auth/oauth-client/service.js';
+import { TokenStore, loadTokenKey } from './auth/oauth-client/token-store.js';
+import { dirname, join, resolve } from 'node:path';
 
 export interface RunningGateway {
   server: Server;
@@ -35,6 +39,12 @@ export interface StartOptions {
   logger?: Logger;
   /** `silent` keeps the gateway's own logs out of a test's stdout. */
   logLevel?: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
+  /**
+   * S5.2: overrides the encrypted token store path. Defaults to
+   * `GATEWAY_TOKEN_STORE`, then `data/tokens.enc.json` beside the CONFIG file. Tests set
+   * this so parallel gateways never share one file.
+   */
+  tokenStorePath?: string;
 }
 
 export async function startGateway(options: StartOptions = {}): Promise<RunningGateway> {
@@ -51,14 +61,29 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
     });
   logger.info({ config: path, ...configSummary(config) }, 'gateway starting');
 
-  const manager = new UpstreamManager(config, { secrets, logger });
+  // S5.4: `port` is assigned by `listen()` below, so the OAuth service reads it lazily.
+  let port = config.gateway.port;
+  const oauth = createOAuthServiceIfConfigured(config, logger, () => port, options.tokenStorePath, path);
+
+  const manager = new UpstreamManager(config, {
+    secrets,
+    logger,
+    ...(oauth === undefined
+      ? {}
+      : { authProviderFor: (name: string) => oauth.providerFor(name) }),
+  });
   const aggregator: ToolsAggregatorDeps = {
     manager,
     logger,
     defaultTtlMs: config.gateway.defaultTtlMs,
   };
 
-  const { app, startFanout, stopFanout } = buildHttpApp({ config, aggregator, logger });
+  const { app, startFanout, stopFanout } = buildHttpApp({
+    config,
+    aggregator,
+    logger,
+    ...(oauth === undefined ? {} : { oauth }),
+  });
 
   const server = await new Promise<Server>((resolve, reject) => {
     const s = app.listen(config.gateway.port, config.gateway.host, () => resolve(s));
@@ -66,7 +91,7 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
   });
 
   const address = server.address();
-  const port = typeof address === 'object' && address !== null ? address.port : config.gateway.port;
+  port = typeof address === 'object' && address !== null ? address.port : config.gateway.port;
 
   // D8: a failure here never blocks startup; broken upstreams surface in /status.
   await manager.start();
@@ -104,6 +129,41 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
       logger.info('gateway stopped');
     },
   };
+}
+
+/**
+ * S5.4: builds the OAuth service only when at least one remote upstream configures `oauth`.
+ *
+ * Requiring GATEWAY_TOKEN_KEY unconditionally would break every deployment that does not use
+ * upstream OAuth, so the key is loaded only when the feature is actually configured. A
+ * configured-but-unkeyed deployment is a startup error naming the VARIABLE, never its value.
+ */
+function createOAuthServiceIfConfigured(
+  config: GatewayConfig,
+  logger: Logger,
+  port: () => number,
+  tokenStorePath: string | undefined,
+  configPath: string,
+): OAuthService | undefined {
+  const usesOAuth = Object.values(config.mcp).some(
+    (upstream) => upstream.type === 'remote' && upstream.oauth !== undefined && upstream.oauth !== false,
+  );
+  if (!usesOAuth) return undefined;
+
+  const key = loadTokenKey();
+  // S5.2 names `data/tokens.enc.json`; where it resolves from is a real decision. Resolving
+  // against the process CWD made two gateways started from different directories share one
+  // file, and tests running in parallel collided on it — one instance's key could not
+  // decrypt another's store, which surfaced as an upstream in `error`. It is anchored to
+  // the CONFIG file's directory instead, and overridable per deployment.
+  const configured = tokenStorePath ?? process.env['GATEWAY_TOKEN_STORE'];
+  const storePath =
+    configured !== undefined && configured.length > 0
+      ? resolve(configured)
+      : join(dirname(configPath), 'data', 'tokens.enc.json');
+  const store = new TokenStore({ path: storePath, key });
+  logger.info({ tokenStore: store.path }, 'upstream OAuth configured; encrypted token store enabled');
+  return new OAuthService({ config, store, logger, port });
 }
 
 async function main(): Promise<void> {

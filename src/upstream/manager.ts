@@ -5,8 +5,9 @@
 // and surfaced through `/status`, never by failing the whole gateway.
 
 import type { GatewayConfig, UpstreamConfig } from '../config/schema.js';
-import { RemoteUpstream } from './remote.js';
+import { RemoteUpstream, type RemoteUpstreamOptions } from './remote.js';
 import { StdioUpstream } from './stdio.js';
+import type { OAuthClientProvider } from '@modelcontextprotocol/client';
 import type { Logger } from '../observability/logger.js';
 import type { ToolListResult, Upstream, UpstreamStatusInfo } from './types.js';
 
@@ -28,12 +29,19 @@ export interface UpstreamManagerOptions {
   factory?: (name: string, config: UpstreamConfig, defaultTimeoutMs: number) => Upstream;
   /** Required to build a stdio upstream: S4.4 logs its stderr. */
   logger?: Logger;
+  /**
+   * PLAN.md S5.4: the OAuth provider for an upstream, or `undefined` when it does not use
+   * OAuth. Returning `undefined` leaves the upstream unauthenticated.
+   */
+  authProviderFor?: (name: string) => OAuthClientProvider | undefined;
 }
 
 export interface UpstreamReport {
   name: string;
   kind: 'remote' | 'local';
   status: UpstreamStatusInfo;
+  /** PLAN.md S5.4: present for OAuth upstreams; the local route that starts authorization. */
+  oauthStartUrl?: string;
 }
 
 interface Entry {
@@ -159,6 +167,9 @@ export class UpstreamManager {
       name,
       kind: entry.upstream.kind,
       status: entry.upstream.status(),
+      // S5.4: /status shows the start URL so an operator can act on auth_required.
+      // A route path, never a token.
+      ...(entry.upstream.oauthStartUrl === undefined ? {} : { oauthStartUrl: entry.upstream.oauthStartUrl }),
     }));
   }
 
@@ -234,6 +245,11 @@ export class UpstreamManager {
     // short-circuit: the whole point is that the first request starts the child process.
     // For a non-lazy upstream `disabled` still means "do not touch".
     if (state === 'disabled' && !entry.upstream.lazy) return;
+
+    // `auth_required` cannot be fixed by retrying: it needs a human to visit the start URL.
+    // Without this, every incoming request re-attempted the connection and hammered the
+    // upstream (and its 401 endpoint) instead of waiting for consent.
+    if (state === 'auth_required') return;
 
     if (state === 'failed') {
       const elapsed = this.#now() - entry.lastFailureAt;
@@ -322,9 +338,12 @@ export class UpstreamManager {
         ...(this.#options.clearTimeoutFn === undefined ? {} : { clearTimeoutFn: this.#options.clearTimeoutFn }),
       });
     }
-    const remoteOptions: { secrets?: readonly string[]; now?: () => number } = {};
+    const remoteOptions: RemoteUpstreamOptions = {};
     if (this.#options.secrets !== undefined) remoteOptions.secrets = this.#options.secrets;
     if (this.#options.now !== undefined) remoteOptions.now = this.#options.now;
+    // S5.4: an upstream with `oauth` gets a provider; one without is left unauthenticated.
+    const authProvider = this.#options.authProviderFor?.(name);
+    if (authProvider !== undefined) remoteOptions.authProvider = authProvider;
     return new RemoteUpstream(name, upstreamConfig, this.#config.gateway.defaultTimeoutMs, remoteOptions);
   }
 

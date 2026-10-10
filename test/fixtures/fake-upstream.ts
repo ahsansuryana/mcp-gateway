@@ -24,6 +24,8 @@ export interface FakeUpstream {
    */
   publishPromptsChanged: () => void;
   publishResourcesChanged: () => void;
+  /** Every `WWW-Authenticate` challenge emitted; S5.6 asserts against it. */
+  challenges: string[];
   close: () => Promise<void>;
 }
 
@@ -49,8 +51,15 @@ export interface FakeOptions {
   prefix: string;
   /** Emitted as the server's own `tools/list` cache hint. */
   ttlMs?: number;
-  /** Reported by the fake for its bearer requirement; used for the 401 scenario. */
+  /**
+   * S5.4/S5.6: makes the fake answer 401 with a `WWW-Authenticate` challenge unless the
+   * request carries `Authorization: Bearer <requireAuthToken>`.
+   */
   requireAuth?: boolean;
+  /** The one bearer token this protected fake accepts. */
+  requireAuthToken?: string;
+  /** Every `WWW-Authenticate` challenge the fake has emitted; lets a test assert discovery. */
+  challenges?: string[];
 }
 
 /** Port allocation is sequential and explicit so transcripts stay reproducible. */
@@ -223,7 +232,29 @@ export async function startFakeUpstream(options: FakeOptions): Promise<FakeUpstr
 
   const handler = createMcpHandler(factory, { legacy: 'reject' });
   const nodeHandler = toNodeHandler(handler);
+  const challenges: string[] = [];
+  const mcpUrl = `http://127.0.0.1:${options.port}/mcp`;
   const httpServer = http.createServer((req, res) => {
+    // S5.4/S5.6: a real 401 with a WWW-Authenticate challenge, which is what the MCP
+    // authorization spec requires a protected resource to answer.
+    // verified: docs/ref/spec-2026-07-28-basic-authorization-index.md lines 101-124 — the
+    //   server SHOULD include `resource_metadata` and may include `scope` in the challenge.
+    if (options.requireAuth === true) {
+      const header = req.headers.authorization ?? '';
+      const presented = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+      if (presented !== options.requireAuthToken) {
+        const challenge =
+          `Bearer resource_metadata="${mcpUrl.replace(/\/mcp$/, '')}/.well-known/oauth-protected-resource/mcp"`;
+        challenges.push(challenge);
+        res.writeHead(401, {
+          'WWW-Authenticate': challenge,
+          'content-type': 'application/json',
+        });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
+        return;
+      }
+    }
+
     // The SDK's duck-typed request shape declares `method?: string`, while Node types it
     // `string | undefined`. Under `exactOptionalPropertyTypes` the two are incompatible even
     // though the runtime shape is identical, and eslint's no-unnecessary-type-assertion
@@ -243,6 +274,7 @@ export async function startFakeUpstream(options: FakeOptions): Promise<FakeUpstr
     publishPromptsChanged: () => handler.notify.promptsChanged(),
     publishResourcesChanged: () => handler.notify.resourcesChanged(),
     close: () => new Promise<void>((resolve) => httpServer.close(() => resolve())),
+    challenges,
   };
 }
 
