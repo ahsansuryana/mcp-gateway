@@ -16,8 +16,17 @@ export interface RunningGateway {
   server: Server;
   manager: UpstreamManager;
   port: number;
+  /** Exposed so the process-level signal handler can log its decisions. */
+  logger: Logger;
   stop: () => Promise<void>;
 }
+
+/**
+ * PLAN.md S4.5: how long a graceful stop may run before child processes are killed.
+ * The SDK's own close() can already take ~4s per child, so this is a ceiling on the whole
+ * shutdown, not a delay added to it.
+ */
+export const SHUTDOWN_GRACE_MS = 5_000;
 
 export interface StartOptions {
   /** Overrides the config path (tests pass a fixture). */
@@ -71,9 +80,26 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
     server,
     manager,
     port,
+    logger,
     stop: async () => {
       await stopFanout().catch(() => undefined);
-      await manager.stop();
+      // A graceful stop gets SHUTDOWN_GRACE_MS in total. If it overruns, any child process
+      // tree still alive is killed outright rather than being orphaned.
+      let timedOut = false;
+      const deadline = new Promise<'timeout'>((resolve) => {
+        const timer = setTimeout(() => resolve('timeout'), SHUTDOWN_GRACE_MS);
+        // Do not hold the event loop open purely for the deadline.
+        timer.unref?.();
+      });
+      await Promise.race([manager.stop().then(() => 'done' as const), deadline]).then(
+        (outcome) => {
+          timedOut = outcome === 'timeout';
+        },
+      );
+      if (timedOut) {
+        logger.warn('graceful shutdown deadline exceeded, killing child process trees');
+        await manager.forceStopAll();
+      }
       await new Promise<void>((resolve) => server.close(() => resolve()));
       logger.info('gateway stopped');
     },
@@ -83,11 +109,23 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
 async function main(): Promise<void> {
   try {
     const gateway = await startGateway();
-    const shutdown = (): void => {
+    const { logger } = gateway;
+    let shuttingDown = false;
+    const shutdown = (signal: NodeJS.Signals): void => {
+      // A second signal means "I am out of patience": kill the child trees now instead of
+      // waiting out the grace period. Without this, an unresponsive child holds the process
+      // open for the full deadline after the operator has already given up.
+      if (shuttingDown) {
+        logger.warn({ signal }, 'second signal, forcing child process kill');
+        void gateway.manager.forceStopAll().finally(() => process.exit(EXIT_OK));
+        return;
+      }
+      shuttingDown = true;
+      logger.info({ signal }, 'shutdown signal received');
       void gateway.stop().then(() => process.exit(EXIT_OK));
     };
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
   } catch (err) {
     if (err instanceof ConfigErrorList) {
       process.stderr.write(`${err.message}\n`);

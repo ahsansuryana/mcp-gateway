@@ -185,6 +185,19 @@ export class UpstreamManager {
   }
 
   /**
+   * PLAN.md S4.5: force-kills every upstream that owns a process tree. Called only after
+   * a graceful `stop()` has overrun its deadline, so a child that ignored the SDK's
+   * close sequence cannot outlive the gateway.
+   */
+  async forceStopAll(): Promise<void> {
+    await Promise.all(
+      [...this.#entries.values()].map(async (entry) => {
+        await entry.upstream.forceStop?.().catch(() => undefined);
+      }),
+    );
+  }
+
+  /**
    * Fans out to every ready upstream and returns the results of the healthy ones (D8).
    * Broken upstreams are recorded and simply absent from `results`.
    */

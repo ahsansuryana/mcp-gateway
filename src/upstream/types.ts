@@ -78,6 +78,12 @@ export interface Upstream {
   stop(): Promise<void>;
 
   /**
+   * PLAN.md S4.5: kill the child and every descendant, used only when a graceful stop
+   * has already exceeded its deadline. Optional: only a process-based upstream has one.
+   */
+  forceStop?(): Promise<void>;
+
+  /**
    * D8: rejects when this upstream is unusable, so the caller can drop it from the
    * aggregate and report it in `/status`.
    */

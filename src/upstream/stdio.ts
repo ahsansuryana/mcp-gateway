@@ -30,6 +30,7 @@ import type { LocalUpstreamConfig } from '../config/schema.js';
 import { scrubSecrets } from '../observability/logger.js';
 import type { Logger } from '../observability/logger.js';
 import type { ToolListResult, Upstream, UpstreamStatus, UpstreamStatusInfo } from './types.js';
+import { killProcessTree } from './process-tree.js';
 
 /** S4.4: stderr lines are truncated to this many characters before logging. */
 export const STDERR_LINE_LIMIT = 2048;
@@ -104,6 +105,37 @@ export class StdioUpstream implements Upstream {
     this.#transition('disabled');
   }
 
+  /**
+   * PLAN.md S4.5: pid of the running child, or undefined when not started.
+   *
+   * Read BEFORE `stop()`, because stopping clears the transport.
+   */
+  get pid(): number | undefined {
+    // verified: node_modules/@modelcontextprotocol/client/dist/stdio.d.mts
+    //   (get pid(): number | null — "the child process pid spawned by this transport")
+    return this.#transport?.pid ?? undefined;
+  }
+
+  /**
+   * Kills the child AND its descendants. Used only when a graceful `stop()` has already
+   * exceeded its deadline: the SDK's own close() signals the direct child, which orphans
+   * the grandchildren of `npx`/`uvx`-style wrappers.
+   */
+  async forceStop(): Promise<void> {
+    const pid = this.pid;
+    this.#clearIdleTimer();
+    await this.#teardown().catch(() => undefined);
+    if (pid === undefined) return;
+    const result = await killProcessTree(pid);
+    if (!result.killed) {
+      this.#options.logger.debug(
+        { upstream: this.name, pid, reason: result.error },
+        'process tree kill did not complete',
+      );
+    }
+    this.#transition('disabled');
+  }
+
   async #doStart(): Promise<void> {
     this.#transition('starting');
     try {
@@ -112,7 +144,7 @@ export class StdioUpstream implements Upstream {
       this.#transport = new StdioClientTransport({
         command: this.#executable(),
         args: this.#args(),
-        ...(this.#options.secrets === undefined ? {} : { env: this.#childEnv() }),
+        env: this.#childEnv(),
         // S4.4: capture stderr instead of inheriting it.
         stderr: 'pipe',
       });
