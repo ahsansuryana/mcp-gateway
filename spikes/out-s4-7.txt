@@ -1,0 +1,23 @@
+# S4.7 real public stdio server transcript
+# package: @modelcontextprotocol/server-everything@2026.8.31
+# server:  F:\mcp-gateway\spikes\node_modules\@modelcontextprotocol\server-everything\dist\index.js
+# platform: win32 x64 node v24.18.0
+
+{"level":"info","time":1791628859217,"upstream":"everything","stderr":"Starting default (STDIO) server...","msg":"upstream stderr"}
+start: {"state":"ready","since":1791628859295}
+pid:   3512
+
+tools/list -> echo, get-annotated-message, get-env, get-resource-links, get-resource-reference, get-structured-content, get-sum, get-tiny-image, gzip-file-as-resource, toggle-simulated-logging, toggle-subscriber-updates, trigger-long-running-operation, trigger-elicitation-request, simulate-research-query
+
+tools/call echo -> [{"type":"text","text":"Echo: hello from the gateway"}]
+
+tools/call get-sum -> [{"type":"text","text":"The sum of 2 and 3 is 5."}]
+
+tools/call get-env -> contains canary: false
+
+tools/call trigger-elicitation-request -> {"content":[{"type":"text","text":"MCP error -32601: Method not found"}],"isError":true}
+
+{"level":"warn","time":1791628859698,"upstream":"everything","msg":"stdio upstream process exited"}
+stop:  {"state":"disabled","since":1791628859699}
+
+RESULT: OK
