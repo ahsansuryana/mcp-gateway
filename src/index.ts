@@ -6,7 +6,7 @@ import type { Server } from 'node:http';
 import { loadConfig } from './config/load.js';
 import { aggregateToolsList, type ToolsAggregatorDeps } from './aggregate/tools.js';
 import { buildHttpApp } from './server/http.js';
-import { createLogger, secretsFromConfig } from './observability/logger.js';
+import { createLogger, secretsFromConfig, type Logger } from './observability/logger.js';
 import { configSummary } from './observability/redact.js';
 import { UpstreamManager } from './upstream/manager.js';
 import { EXIT_INVALID, EXIT_OK } from './cli.js';
@@ -22,16 +22,27 @@ export interface RunningGateway {
 export interface StartOptions {
   /** Overrides the config path (tests pass a fixture). */
   configPath?: string;
+  /** Overrides the logger (tests pass a silent one). */
+  logger?: Logger;
+  /** `silent` keeps the gateway's own logs out of a test's stdout. */
+  logLevel?: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
 }
 
 export async function startGateway(options: StartOptions = {}): Promise<RunningGateway> {
   const { config, path } = loadConfig(options.configPath === undefined ? {} : { path: options.configPath });
 
+  const secrets = secretsFromConfig(config);
   // D9 / D14: register the literal secret values so no log line can ever carry one.
-  const logger = createLogger({ secrets: secretsFromConfig(config), base: { app: 'mcp-gateway' } });
+  const logger =
+    options.logger ??
+    createLogger({
+      secrets,
+      base: { app: 'mcp-gateway' },
+      ...(options.logLevel === undefined ? {} : { level: options.logLevel }),
+    });
   logger.info({ config: path, ...configSummary(config) }, 'gateway starting');
 
-  const manager = new UpstreamManager(config, { secrets: secretsFromConfig(config) });
+  const manager = new UpstreamManager(config, { secrets });
   const aggregator: ToolsAggregatorDeps = {
     manager,
     logger,

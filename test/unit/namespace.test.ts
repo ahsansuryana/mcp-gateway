@@ -110,9 +110,9 @@ describe('D4 namespacing', () => {
     expect(tools.map((t) => t.namespaced)).toEqual(['github_ok']);
     expect(report.kept).toBe(1);
     expect(report.skipped).toEqual([
-      { server: 'github', name: long, reason: 'too-long' },
-      { server: 'bad_name', name: 'ok', reason: 'server-name-invalid' },
-      { server: 'github', name: '', reason: 'tool-name-empty' },
+      { server: 'github', tool: long, reason: 'too-long' },
+      { server: 'bad_name', tool: 'ok', reason: 'server-name-invalid' },
+      { server: 'github', tool: '', reason: 'tool-name-empty' },
     ]);
   });
 
