@@ -7,7 +7,7 @@ import { originValidation } from '@modelcontextprotocol/express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 
 import { createBearerAuth } from './auth.js';
-import type { OAuthService } from '../auth/oauth-client/service.js';
+import { OAuthService } from '../auth/oauth-client/service.js';
 import { buildGatewayMcp } from './mcp.js';
 import { aggregateCallTool, type ToolsAggregatorDeps } from '../aggregate/tools.js';
 import type { Logger } from '../observability/logger.js';
@@ -74,6 +74,27 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
   });
 
   const auth = createBearerAuth(config.gateway.auth.keys);
+
+  // --- PLAN.md P6-1: the Client ID Metadata Document -------------------------------
+  // Only registered when publicUrl is set. A gateway with no public URL has no identity to
+  // publish, and serving a document whose client_id cannot be validated would be worse than
+  // 404: an authorization server fetches it and rejects it.
+  if (options.oauth !== undefined && options.oauth.clientMetadataUrl !== undefined) {
+    const metadataPath = OAuthService.CLIENT_METADATA_PATH;
+    // Unauthenticated on purpose. An authorization server fetches this document BEFORE any
+    // user credential exists; requiring the gateway bearer key would make CIMD impossible.
+    // The document contains no secret: client_id, client_name and redirect_uris only.
+    app.get(metadataPath, (_req: Request, res: Response) => {
+      const document = options.oauth!.clientMetadataDocument();
+      // verified: docs/ref/spec-2026-07-28-basic-authorization-client-registration.md
+      //   line 43 — "Clients MUST ensure the client_id value in the metadata matches the
+      //   document URL exactly". That holds because `client_id` is derived from
+      //   gateway.publicUrl, which is where this document is actually published, rather
+      //   than from the request, whose Host header is caller-controlled.
+      res.setHeader('cache-control', 'public, max-age=300');
+      res.status(200).json(document);
+    });
+  }
 
   // --- PLAN.md S5.4: upstream OAuth routes -------------------------------------
   // Both sit behind the gateway's own bearer key: an unauthenticated caller must not be

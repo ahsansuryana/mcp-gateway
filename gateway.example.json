@@ -6,6 +6,13 @@
   "gateway": {
     "host": "0.0.0.0",
     "port": 3000,
+    // The public https URL this gateway is reached at. Required for:
+    //   - the Client ID Metadata Document (/.well-known/oauth-client.json), the CIMD
+    //     registration path (docs/adr/0007-q4-resolved-and-cimd-self-served.md);
+    //   - the token audience and the RFC 9728 protected-resource metadata in Sprint 6;
+    //   - the Origin allowlist.
+    // The value committed here is an EXAMPLE. The one the operator runs with lives in the
+    // uncommitted gateway.json; a production hostname is never committed (PLAN.md rule 10).
     "publicUrl": "https://mcp.example.com",
     "auth": {
       "type": "bearer",

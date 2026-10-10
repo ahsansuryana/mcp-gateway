@@ -36,6 +36,10 @@ import {
 import type { Logger } from '../../observability/logger.js';
 import type { TokenStore } from './token-store.js';
 
+// verified: docs/ref/spec-2026-07-28-basic-authorization-client-registration.md line 41 —
+//   the client_id URL MUST use https and contain a path component.
+const CLIENT_METADATA_PATH = '/.well-known/oauth-client.json';
+
 /** How the gateway obtained a `client_id` for this upstream. */
 export type RegistrationMethod = 'static' | 'cimd' | 'dcr' | 'none';
 
@@ -337,14 +341,22 @@ function chooseRegistrationMethod(
   //    (docs/ref/oauth-flow.md § 3.1, docs/OPEN-QUESTIONS.md Q-CIMD).
   if (metadata['client_id_metadata_document_supported'] === true) {
     const cimdUrl = provider.resolvableClientMetadataUrl;
-    if (cimdUrl !== undefined) provider.clientMetadataUrl = cimdUrl;
     if (cimdUrl === undefined) {
-      log?.warn(
-        'authorization server supports Client ID Metadata Documents but gateway.publicUrl is unset, so no https client metadata URL can be published; falling back',
+      // P6-1: report it, do not silently fall back. Falling back to DCR would downgrade a
+      // deprecated mechanism behind the operator's back, and the authorization server
+      // prefers CIMD enough to advertise it.
+      //
+      // verified: docs/ref/spec-2026-07-28-basic-authorization-client-registration.md
+      //   lines 40-41 — the document MUST be at an https URL, and the client_id URL MUST use
+      //   https and contain a path component. Neither is constructible without publicUrl.
+      throw new MissingPublicUrlError(
+        'authorization server supports Client ID Metadata Documents, but this gateway cannot ' +
+          'publish one: gateway.publicUrl is not configured. Set gateway.publicUrl to the ' +
+          `public https URL under which ${CLIENT_METADATA_PATH} is served.`,
       );
-    } else {
-      return 'cimd';
     }
+    provider.clientMetadataUrl = cimdUrl;
+    return 'cimd';
   }
 
   // 3. Dynamic Client Registration, deprecated but still needed for ASes without CIMD.
@@ -358,7 +370,27 @@ function chooseRegistrationMethod(
     return 'dcr';
   }
 
-  return 'none';
+  throw new UnsupportedRegistrationError(
+    'this authorization server offers neither Client ID Metadata Documents nor Dynamic Client ' +
+      'Registration, so the gateway cannot obtain a client id. Pre-register the gateway and ' +
+      'set mcp.<name>.oauth.clientId.',
+  );
+}
+
+/** P6-1: CIMD was chosen by the AS but the gateway has no public URL to publish under. */
+export class MissingPublicUrlError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MissingPublicUrlError';
+  }
+}
+
+/** No registration mechanism the gateway supports is available. */
+export class UnsupportedRegistrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnsupportedRegistrationError';
+  }
 }
 
 function toStoredTokens(record: {

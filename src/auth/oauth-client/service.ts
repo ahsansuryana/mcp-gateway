@@ -71,17 +71,63 @@ export class OAuthService {
   }
 
   /**
-   * The https URL a Client ID Metadata Document would be published at.
+   * The path the Client ID Metadata Document is served at.
    *
-   * `undefined` while Q4 is open, which is what disables the CIMD branch
-   * (docs/ref/oauth-flow.md § 3.1, docs/OPEN-QUESTIONS.md Q-CIMD).
+   * verified: docs/ref/spec-2026-07-28-basic-authorization-client-registration.md
+   *   line 41 — the client_id URL MUST use the https scheme AND contain a path component,
+   *   e.g. https://example.com/client.json. A root URL cannot satisfy this.
+   */
+  static readonly CLIENT_METADATA_PATH = '/.well-known/oauth-client.json';
+
+  /**
+   * The absolute https URL the Client ID Metadata Document is published at, or `undefined`
+   * when `gateway.publicUrl` is unset.
+   *
+   * Q4 is resolved (docs/adr/0007-q4-resolved-and-cimd-self-served.md) but the value still
+   * lives in the operator's uncommitted gateway.json, so `undefined` remains a real runtime
+   * state that must fail clearly rather than silently.
    */
   get clientMetadataUrl(): string | undefined {
     const publicUrl = this.#options.config.gateway.publicUrl;
     if (publicUrl === undefined) return undefined;
-    // verified: docs/ref/spec-2026-07-28-basic-authorization-client-registration.md
-    //   line 41 — the client_id URL MUST use https and contain a path component.
-    return new URL('/.well-known/oauth-client.json', publicUrl).href;
+    return new URL(OAuthService.CLIENT_METADATA_PATH, publicUrl).href;
+  }
+
+  /**
+   * The document the authorization server fetches to learn this gateway's identity.
+   *
+   * verified: docs/ref/spec-2026-07-28-basic-authorization-client-registration.md
+   *   lines 38-44, "For MCP Clients":
+   *     - "Clients MUST host their metadata document at an HTTPS URL"
+   *     - "The client_id URL MUST use the 'https' scheme and contain a path component"
+   *     - "The metadata document MUST include at least the following properties: client_id,
+   *        client_name, redirect_uris"
+   *     - "Clients MUST ensure the client_id value in the metadata matches the document URL
+   *        exactly"
+   *
+   * The last MUST is why `client_id` is derived from the request URL rather than from
+   * `publicUrl` when they could disagree: serving the document under a different host than
+   * the configured one would produce a document an authorization server MUST reject.
+   */
+  clientMetadataDocument(): Record<string, unknown> {
+    // `client_id` comes from publicUrl, NEVER from the request. Deriving it from the
+    // request's Host header would let any caller that reaches the gateway rewrite the
+    // identity an authorization server is about to trust. It is also what makes the
+    // spec MUST satisfiable: publicUrl is https, a proxied request may well be plain http.
+    const clientId = this.clientMetadataUrl;
+    if (clientId === undefined) {
+      throw new Error('gateway.publicUrl is not configured');
+    }
+    return {
+      client_id: clientId,
+      client_name: 'mcp-gateway',
+      client_uri: this.#options.config.gateway.publicUrl,
+      redirect_uris: [this.callbackUrl],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      application_type: 'native',
+      token_endpoint_auth_method: 'none',
+    };
   }
 
   /** The upstream names that have `oauth` configured and are not explicitly disabled. */
