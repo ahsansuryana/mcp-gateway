@@ -74,3 +74,12 @@ owns. PLAN.md §3 rule 8: anything out of scope goes here instead of into code.
 | ID | Item | Origin | Suggested home |
 |---|---|---|---|
 | B-30 | **B-24 integrity pass — DONE at the Sprint 5 gate.** Closed in `f627199`: closed subscriptions now withdraw their `listChanged` contribution, and `prompts`/`resources` list-changed events are actually relayed. Kept here for traceability only. | human instruction | closed |
+
+## From Sprint 5
+
+| ID | Item | Origin | Suggested home |
+|---|---|---|---|
+| B-31 | **403 / `insufficient_scope` step-up is not implemented.** The spec says a client SHOULD respond to a runtime insufficient-scope challenge with a step-up authorization: compute the union of previously granted scopes and the challenge's, re-authorize, retry a few times, then treat it as permanent. v1 has no interactive surface, so the gateway cannot do this. | `docs/ref/oauth-flow.md` § 8 | S6 / S7, needs a UX decision |
+| B-32 | **Operator documentation for `GATEWAY_TOKEN_KEY` is missing.** Losing the key makes every stored token unrecoverable; leaking it exposes all of them. `docs/SECURITY.md` needs a key-management section, and `gateway.example.json` should show the variable. | S5.2 / S5 risk review | S7.5 |
+| B-33 | **Token-store key rotation is not supported.** `TokenStore` accepts one key; there is no re-encryption path for a rotated key. | S5.2 | S7 hardening |
+| B-34 | **`application_type` and `clientMetadataUrl` are not in PLAN.md §6.** The gateway derives CIMD's URL from `publicUrl` rather than configuring it, so §6 stayed authoritative, but §6 should eventually be amended by hand (rule: the agent does not edit §6). | S5.1 § 11.3 | S6 / §6 amendment by human |
