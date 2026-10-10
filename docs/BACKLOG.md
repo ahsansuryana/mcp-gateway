@@ -83,3 +83,10 @@ owns. PLAN.md §3 rule 8: anything out of scope goes here instead of into code.
 | B-32 | **Operator documentation for `GATEWAY_TOKEN_KEY` is missing.** Losing the key makes every stored token unrecoverable; leaking it exposes all of them. `docs/SECURITY.md` needs a key-management section, and `gateway.example.json` should show the variable. | S5.2 / S5 risk review | S7.5 |
 | B-33 | **Token-store key rotation is not supported.** `TokenStore` accepts one key; there is no re-encryption path for a rotated key. | S5.2 | S7 hardening |
 | B-34 | **`application_type` and `clientMetadataUrl` are not in PLAN.md §6.** The gateway derives CIMD's URL from `publicUrl` rather than configuring it, so §6 stayed authoritative, but §6 should eventually be amended by hand (rule: the agent does not edit §6). | S5.1 § 11.3 | S6 / §6 amendment by human |
+
+## Sprint 6 gate (human decisions, 2026-10-10)
+
+| ID | Item | Origin | Suggested home |
+|---|---|---|---|
+| S5-MANUAL | **Sprint 5 manual test against a real OAuth server — DEFERRED by human decision until Q4 is deployed.** The full checklist is already written: `docs/reports/sprint-5-manual-test.md` (target Notion's `https://mcp.notion.com/mcp`, with the live metadata captured). Not a Sprint 6 blocker. | human decision at the Sprint 6 gate | run once the gateway is deployed behind `publicUrl` |
+| S5-LINUX | **Sprint 5 Linux verification — NOT RUN.** The remote Docker host became unreachable mid-sprint (`ssh: connect to host 100.100.1.1 port 22: Permission denied`, a problem on the human's side). Never claimed as a pass. Unverified on Linux: the `chmod 0600` token-store assertions (the one test Windows *skips*) and the full suite. Re-run first once the host is back. | human decision at the Sprint 6 gate | **MUST be closed before Sprint 7 starts** |

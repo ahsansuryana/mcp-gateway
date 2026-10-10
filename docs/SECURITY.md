@@ -110,6 +110,31 @@ Without it the gateway degrades to killing the direct child and logs
 `node:24-bookworm-slim` do not ship `procps`; install it if your stdio upstreams spawn
 grandchildren.
 
+## Known spec deviations
+
+### Tokens obtained for upstreams are not audience-bound
+
+The MCP authorization spec requires an OAuth client to send the RFC 8707 `resource`
+parameter in **both** the authorization request and the token request, and to send it
+"regardless of whether authorization servers support it"
+(verified: `docs/ref/spec-2026-07-28-basic-authorization-index.md` lines 219-222, 254).
+
+`@modelcontextprotocol/client` 2.3.1 does **not** send it. Measured, not assumed: see
+`test/integration/oauth-flow.integration.test.ts`, "S5.6 resource parameter — SDK
+DEVIATION, recorded", which asserts the observed absence so it fails loudly if the SDK
+changes.
+
+**What this means concretely.** An access token the gateway obtains from an upstream's
+authorization server carries no cryptographic binding to *which* upstream it was minted for.
+RFC 8707 exists precisely to prevent a token issued for one resource from being replayed at
+another. The gateway does not hand a token to a different upstream on its own, but the
+protection is delegated to the authorization server rather than enforced by us, and a
+server that *requires* `resource` will reject us outright.
+
+Policy: ship without the parameter, do not hand-roll around the SDK, and file upstream.
+See `docs/adr/0008-rfc8707-resource-parameter-interim.md` and the draft issue at
+`docs/ref/sdk-issue-resource-parameter.md`.
+
 ## Failures that must not leak
 
 - A broken upstream never takes down the gateway (D8). Its tools are dropped from the
