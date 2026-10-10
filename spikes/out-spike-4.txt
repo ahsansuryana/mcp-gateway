@@ -1,0 +1,40 @@
+[upstream] http://127.0.0.1:3161/mcp
+{"level":"info","time":1791595993142,"app":"mcp-gateway","config":"C:\\Users\\ahsan\\AppData\\Local\\Temp\\mcp-gateway-s27-CVJt9n\\gateway.json","upstreamCount":1,"upstreams":{"demo":{"type":"remote","enabled":true}},"msg":"gateway starting"}
+{"level":"info","time":1791595993409,"app":"mcp-gateway","port":50100,"upstreams":[{"name":"demo","kind":"remote","status":{"state":"ready","since":1791595993408}}],"msg":"gateway listening"}
+[gateway] http://127.0.0.1:50100/mcp
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:50100/mcp --transport http --header Authorization: Bearer S2-7-CANARY-KEY-0123456789 --method tools/list --format json
+[exit 0]
+{"result":{"tools":[{"name":"demo_add","description":"Add two integers.","inputSchema":{"type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"],"$schema":"https://json-schema.org/draft/2020-12/schema"}},{"name":"demo_boom","description":"Always reports a tool-level failure.","inputSchema":{"type":"object","properties":{},"$schema":"https://json-schema.org/draft/2020-12/schema"}},{"name":"demo_greet","description":"Greet a person.","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"$schema":"https://json-schema.org/draft/2020-12/schema"}}]}}
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:50100/mcp --transport http --protocol-era modern --header Authorization: Bearer S2-7-CANARY-KEY-0123456789 --method tools/call --tool-name demo_add --tool-arg a=2 --tool-arg b=40 --format json
+[exit 0]
+{"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"s27-upstream","version":"0.0.1"}},"content":[{"type":"text","text":"42"}]}}
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:50100/mcp --transport http --protocol-era modern --header Authorization: Bearer S2-7-CANARY-KEY-0123456789 --method tools/call --tool-name demo_greet --tool-args-json {"name":"inspector"} --format json
+[exit 0]
+{"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"s27-upstream","version":"0.0.1"}},"content":[{"type":"text","text":"hello inspector"}]}}
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:50100/mcp --transport http --protocol-era modern --header Authorization: Bearer S2-7-CANARY-KEY-0123456789 --method tools/call --tool-name demo_boom --format json
+[exit 3221226505]
+{"result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"s27-upstream","version":"0.0.1"}},"content":[{"type":"text","text":"upstream tool failure"}],"isError":true}}
+[stderr] {"error":{"code":"tool_is_error","message":"Tool 'demo_boom' returned isError:true."}}
+Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 94
+
+$ npx -y @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:50100/mcp --transport http --method tools/list --format json
+{"level":"warn","time":1791596040582,"app":"mcp-gateway","reason":"missing","msg":"unauthenticated POST /mcp"}
+[exit 3]
+[stderr] {"error":{"code":"auth_required","message":"Interactive OAuth requires a TTY on stdin or stderr (or MCP_AUTO_OPEN_ENABLED=true). For CI/non-interactive runs use --stored-auth-only."}}
+
+$ curl -s -i http://127.0.0.1:PORT/healthz
+HTTP 200 {"ok":true}
+
+$ curl -s -i -H "Authorization: Bearer S2-7-CANARY-KEY-0123456789" http://127.0.0.1:PORT/status
+HTTP 200 {"gateway":{"host":"127.0.0.1","port":50100,"publicUrl":null,"legacyEra":"stateless","defaultTimeoutMs":30000,"defaultTtlMs":30000,"inboundAuthKeys":1,"configuredUpstreams":1},"upstreams":[{"name":"demo","kind":"remote","status":{"state":"ready","since":1791595993408}}]}
+
+$ curl -s -i http://127.0.0.1:PORT/mcp   (no credentials)
+{"level":"warn","time":1791596040807,"app":"mcp-gateway","reason":"missing","msg":"unauthenticated POST /mcp"}
+HTTP 401 www-authenticate=Bearer
+{"level":"info","time":1791596040812,"app":"mcp-gateway","msg":"gateway stopped"}
+
+spike-4 done

@@ -204,8 +204,12 @@ describe('S2.6 inbound auth (D9)', () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
+      gateway: Record<string, unknown>;
       upstreams: { name: string; status: { state: string; lastError?: string } }[];
     };
+    expect(body.gateway['configuredUpstreams']).toBe(3);
+    expect(body.gateway['inboundAuthKeys']).toBe(1);
+    expect(body.gateway['legacyEra']).toBe('stateless');
     const dead = body.upstreams.find((u) => u.name === 'dead');
     expect(dead).toBeDefined();
     expect(['error', 'failed', 'starting']).toContain(dead?.status.state);

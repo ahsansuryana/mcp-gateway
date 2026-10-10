@@ -9,7 +9,6 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createBearerAuth } from './auth.js';
 import { createGatewayHandler } from './mcp.js';
 import { aggregateCallTool, type ToolsAggregatorDeps } from '../aggregate/tools.js';
-import { configSummary } from '../observability/redact.js';
 import type { Logger } from '../observability/logger.js';
 import type { GatewayConfig } from '../config/schema.js';
 
@@ -77,7 +76,17 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
       return;
     }
     res.status(200).json({
-      gateway: configSummary(config.gateway),
+      gateway: {
+        host: config.gateway.host,
+        port: config.gateway.port,
+        publicUrl: config.gateway.publicUrl ?? null,
+        legacyEra: config.gateway.legacyEra,
+        defaultTimeoutMs: config.gateway.defaultTimeoutMs,
+        defaultTtlMs: config.gateway.defaultTtlMs,
+        // The COUNT only: PLAN.md rule 9 forbids the values in /status.
+        inboundAuthKeys: config.gateway.auth.keys.length,
+        configuredUpstreams: Object.keys(config.mcp).length,
+      },
       upstreams: aggregator.manager.reports(),
     });
   });

@@ -7,7 +7,6 @@ import { Server, createMcpHandler, type McpHttpHandler } from '@modelcontextprot
 
 import { aggregateCallTool, aggregateToolsList, type ToolsAggregatorDeps } from '../aggregate/tools.js';
 import type { Logger } from '../observability/logger.js';
-import { configSummary } from '../observability/redact.js';
 import type { GatewayConfig } from '../config/schema.js';
 import { FORWARDED_META_KEYS } from '../aggregate/tools.js';
 
@@ -89,4 +88,3 @@ export function pickForwardableMeta(meta: Record<string, unknown> | undefined): 
   return Object.keys(out).length === 0 ? undefined : out;
 }
 
-export { configSummary };
