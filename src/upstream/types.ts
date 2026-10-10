@@ -49,6 +49,12 @@ export interface Upstream {
   /** Per-upstream request timeout in ms (PLAN.md §6 `timeout`, or the gateway default). */
   readonly timeoutMs: number;
 
+  /**
+   * PLAN.md S4.3: a lazy upstream is started on FIRST USE, not at gateway start. stdio
+   * upstreams are lazy because spawning `npx` is expensive and may download a package.
+   */
+  readonly lazy?: boolean;
+
   status(): UpstreamStatusInfo;
 
   /**

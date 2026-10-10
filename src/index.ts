@@ -42,7 +42,7 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
     });
   logger.info({ config: path, ...configSummary(config) }, 'gateway starting');
 
-  const manager = new UpstreamManager(config, { secrets });
+  const manager = new UpstreamManager(config, { secrets, logger });
   const aggregator: ToolsAggregatorDeps = {
     manager,
     logger,

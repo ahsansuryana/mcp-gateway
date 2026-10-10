@@ -6,6 +6,8 @@
 
 import type { GatewayConfig, UpstreamConfig } from '../config/schema.js';
 import { RemoteUpstream } from './remote.js';
+import { StdioUpstream } from './stdio.js';
+import type { Logger } from '../observability/logger.js';
 import type { ToolListResult, Upstream, UpstreamStatusInfo } from './types.js';
 
 // PLAN.md S2.1: exponential backoff from 1s, capped at 30s.
@@ -22,8 +24,10 @@ export interface UpstreamManagerOptions {
   /** Injectable so tests can drive the backoff without waiting. */
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
-  /** Build a custom Upstream for one entry (used by Sprint 4's stdio upstreams and tests). */
+  /** Build a custom Upstream for one entry (used by tests). */
   factory?: (name: string, config: UpstreamConfig, defaultTimeoutMs: number) => Upstream;
+  /** Required to build a stdio upstream: S4.4 logs its stderr. */
+  logger?: Logger;
 }
 
 export interface UpstreamReport {
@@ -125,9 +129,15 @@ export class UpstreamManager {
     }));
   }
 
-  /** Starts every upstream concurrently; a failure in one never rejects the others (D8). */
+  /** Starts every NON-LAZY upstream concurrently; a failure in one never rejects the
+   * others (D8). Lazy upstreams (S4.3 stdio) are started on first use instead.
+   */
   async start(): Promise<void> {
-    await Promise.all([...this.#entries.values()].map((e) => this.#startEntry(e)));
+    await Promise.all(
+      [...this.#entries.values()]
+        .filter((e) => e.upstream.lazy !== true)
+        .map((e) => this.#startEntry(e)),
+    );
   }
 
   async stop(): Promise<void> {
@@ -247,13 +257,29 @@ export class UpstreamManager {
     if (this.#options.factory !== undefined) {
       return this.#options.factory(name, upstreamConfig, this.#config.gateway.defaultTimeoutMs);
     }
-    if (upstreamConfig.type !== 'remote') {
-      throw new Error(`upstream '${name}' is ${upstreamConfig.type}; only remote upstreams exist in Sprint 2`);
+    const base = { secrets: this.#options.secrets ?? [], logger: this.#loggerFor(name) };
+    if (upstreamConfig.type === 'local') {
+      // PLAN.md S4.1/S4.3.
+      return new StdioUpstream(name, upstreamConfig, this.#config.gateway.defaultTimeoutMs, {
+        ...base,
+        ...(this.#options.now === undefined ? {} : { now: this.#options.now }),
+        ...(this.#options.setTimeoutFn === undefined ? {} : { setTimeoutFn: this.#options.setTimeoutFn }),
+        ...(this.#options.clearTimeoutFn === undefined ? {} : { clearTimeoutFn: this.#options.clearTimeoutFn }),
+      });
     }
     const remoteOptions: { secrets?: readonly string[]; now?: () => number } = {};
     if (this.#options.secrets !== undefined) remoteOptions.secrets = this.#options.secrets;
     if (this.#options.now !== undefined) remoteOptions.now = this.#options.now;
     return new RemoteUpstream(name, upstreamConfig, this.#config.gateway.defaultTimeoutMs, remoteOptions);
+  }
+
+  #loggerFor(name: string): Logger {
+    const parent = this.#options.logger;
+    if (parent === undefined) {
+      throw new Error('UpstreamManager needs a logger to build a stdio upstream');
+    }
+    // S4.4: stderr lines are logged with the upstream name.
+    return parent.child({ upstream: name });
   }
 }
 
