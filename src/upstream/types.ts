@@ -58,6 +58,17 @@ export interface Upstream {
   status(): UpstreamStatusInfo;
 
   /**
+   * Subscribes to state changes this upstream makes on its own.
+   *
+   * The manager needs this: a stdio child can exit at any moment, and only the upstream
+   * observes it. Without the subscription a mid-session crash is invisible to the
+   * manager -- no status event, no backoff, no escalation to `failed` (PLAN.md S4.3).
+   *
+   * Returns an unsubscribe function.
+   */
+  onStatusChange(listener: (state: string) => void): () => void;
+
+  /**
    * Establishes the connection. Idempotent. A failure moves the status to `error`
    * (or `auth_required` on a 401) rather than throwing — D8: one broken upstream never
    * breaks the others.

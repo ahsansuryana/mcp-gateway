@@ -38,6 +38,10 @@ export interface UpstreamReport {
 
 interface Entry {
   upstream: Upstream;
+  /** True while `#startEntry` is awaiting `upstream.start()`. */
+  starting: boolean;
+  /** Detaches the upstream's own status subscription. */
+  unsubscribe: () => void;
   failures: number;
   /** Set while a backoff timer is pending. */
   retryHandle: unknown;
@@ -59,14 +63,43 @@ export class UpstreamManager {
     for (const [name, upstreamConfig] of Object.entries(config.mcp)) {
       if (!upstreamConfig.enabled) continue;
       const upstream = this.#create(name, upstreamConfig);
-      this.#entries.set(name, {
+      const entry: Entry = {
         upstream,
         failures: 0,
         retryHandle: undefined,
         lastFailureAt: 0,
         lastEmittedState: undefined,
+        starting: false,
+        unsubscribe: () => undefined,
+      };
+
+      // A child process can die at any time, not only when the manager tries to start it.
+      // Without this subscription a mid-session crash left the upstream reporting `error`
+      // internally while the manager never counted it: no status event, no backoff, and no
+      // escalation to `failed` (PLAN.md S4.3).
+      entry.unsubscribe = upstream.onStatusChange((state: string) => {
+        this.#onUpstreamStatus(entry, state);
       });
+
+      this.#entries.set(name, entry);
     }
+  }
+
+  /**
+   * Reacts to a state change the upstream made on its own, e.g. a stdio child exiting.
+   *
+   * `entry.starting` suppresses accounting for the transition caused by our own
+   * `#startEntry` call, which already counts that failure exactly once.
+   */
+  #onUpstreamStatus(entry: Entry, state: string): void {
+    if (entry.starting) return;
+
+    if (state === 'ready') {
+      this.#recordSuccess(entry);
+    } else if (state === 'error' || state === 'failed') {
+      this.#recordFailure(entry);
+    }
+    this.#emitStatusOnChange(entry, state);
   }
 
   get names(): string[] {
@@ -142,6 +175,7 @@ export class UpstreamManager {
 
   async stop(): Promise<void> {
     for (const entry of this.#entries.values()) {
+      entry.unsubscribe();
       this.#clearRetry(entry);
       await entry.upstream.stop().catch(() => undefined);
       // Stopping is a real state change and must reach the listeners, otherwise a stop()
@@ -183,7 +217,10 @@ export class UpstreamManager {
   async #ensureStarted(entry: Entry): Promise<void> {
     const state = entry.upstream.status().state;
     if (state === 'starting' || state === 'ready') return;
-    if (state === 'disabled') return;
+    // `disabled` means "not started yet" for a LAZY upstream (PLAN.md S4.3) and must not
+    // short-circuit: the whole point is that the first request starts the child process.
+    // For a non-lazy upstream `disabled` still means "do not touch".
+    if (state === 'disabled' && !entry.upstream.lazy) return;
 
     if (state === 'failed') {
       const elapsed = this.#now() - entry.lastFailureAt;
@@ -198,7 +235,12 @@ export class UpstreamManager {
 
   async #startEntry(entry: Entry): Promise<void> {
     this.#clearRetry(entry);
-    await entry.upstream.start().catch(() => undefined);
+    entry.starting = true;
+    try {
+      await entry.upstream.start().catch(() => undefined);
+    } finally {
+      entry.starting = false;
+    }
     const state = entry.upstream.status().state;
     this.#emitStatusOnChange(entry, state);
     if (state === 'ready') {

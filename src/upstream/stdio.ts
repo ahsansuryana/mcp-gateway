@@ -56,7 +56,10 @@ export class StdioUpstream implements Upstream {
 
   #transport: StdioClientTransport | undefined;
   #client: Client | undefined;
-  #status: UpstreamStatusInfo = { state: 'disabled', since: this.#clock() };
+  // `since` is filled in by the constructor: class field initializers run BEFORE the
+  // constructor body, so a field initializer cannot read `this.#options`.
+  #statusListeners = new Set<(state: string) => void>();
+  #status: UpstreamStatusInfo = { state: 'disabled', since: 0 };
   #idleHandle: unknown;
   #startPromise: Promise<void> | undefined;
 
@@ -66,6 +69,14 @@ export class StdioUpstream implements Upstream {
     this.timeoutMs = config.timeout ?? defaultTimeoutMs;
     this.#options = options;
     this.#now = options.now ?? Date.now;
+    this.#status = { state: 'disabled', since: this.#now() };
+  }
+
+  onStatusChange(listener: (state: string) => void): () => void {
+    this.#statusListeners.add(listener);
+    return () => {
+      this.#statusListeners.delete(listener);
+    };
   }
 
   status(): UpstreamStatusInfo {
@@ -143,7 +154,12 @@ export class StdioUpstream implements Upstream {
       this.#armIdleTimer();
     } catch (err) {
       await this.#teardown();
-      this.#transition(this.#classify(err), this.#describe(err));
+      // A spawn failure and a crash both surface as the SDK's
+      // `SdkError(CONNECTION_CLOSED)`, so the message cannot tell them apart. Verified on
+      // Windows for a missing binary. Both are `error` here; PLAN.md S4.3 parks the
+      // upstream in `failed` after MAX_CONSECUTIVE_FAILURES, and the manager owns that
+      // escalation. No message sniffing.
+      this.#transition('error', this.#describe(err));
     }
   }
 
@@ -315,20 +331,18 @@ export class StdioUpstream implements Upstream {
     this.#status = lastError === undefined
       ? { state, since: this.#now() }
       : { state, since: this.#now(), lastError };
-  }
-
-  #classify(err: unknown): UpstreamStatus {
-    if (err instanceof Error && /ENOENT|not found|command not found/i.test(err.message)) return 'failed';
-    return 'error';
+    for (const listener of this.#statusListeners) {
+      try {
+        listener(state);
+      } catch {
+        // A misbehaving listener must not break a status transition.
+      }
+    }
   }
 
   #describe(err: unknown): string {
     const raw = err instanceof Error ? err.message : String(err);
     return scrubSecrets(raw, this.#options.secrets ?? []).slice(0, 500);
-  }
-
-  #clock(): number {
-    return (this.#options.now ?? Date.now)();
   }
 
   /**

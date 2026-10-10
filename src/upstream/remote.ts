@@ -43,6 +43,13 @@ export class RemoteUpstream implements Upstream {
     this.#now = options.now ?? Date.now;
   }
 
+  onStatusChange(listener: (state: string) => void): () => void {
+    this.#statusListeners.add(listener);
+    return () => {
+      this.#statusListeners.delete(listener);
+    };
+  }
+
   status(): UpstreamStatusInfo {
     return this.#status;
   }
@@ -258,10 +265,19 @@ export class RemoteUpstream implements Upstream {
     return scrubSecrets(raw, this.#secrets).slice(0, 500);
   }
 
+  #statusListeners = new Set<(state: string) => void>();
+
   #transition(state: UpstreamStatus, lastError?: string): void {
     this.#status = lastError === undefined
       ? { state, since: this.#now() }
       : { state, since: this.#now(), lastError };
+    for (const listener of this.#statusListeners) {
+      try {
+        listener(state);
+      } catch {
+        // A misbehaving listener must not break a status transition.
+      }
+    }
   }
 }
 
