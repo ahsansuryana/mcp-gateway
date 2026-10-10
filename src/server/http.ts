@@ -8,6 +8,7 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 
 import { createBearerAuth } from './auth.js';
 import { OAuthService } from '../auth/oauth-client/service.js';
+import { ResourceServer } from '../auth/oauth-resource/resource-server.js';
 import { buildGatewayMcp } from './mcp.js';
 import { aggregateCallTool, type ToolsAggregatorDeps } from '../aggregate/tools.js';
 import type { Logger } from '../observability/logger.js';
@@ -75,6 +76,48 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
 
   const auth = createBearerAuth(config.gateway.auth.keys);
 
+  // --- PLAN.md S6.1: protected resource -------------------------------------------
+  // Requires publicUrl: the metadata document and the audience are both derived from it,
+  // and a gateway with no public URL has no canonical resource identifier to publish.
+  const oauthConfig = config.gateway.authOAuth;
+  // Hoisted so the /mcp handler below can consult it.
+  let resourceServer: ResourceServer | undefined = undefined;
+  if (oauthConfig !== undefined) {
+    if (config.gateway.publicUrl === undefined) {
+      throw new Error(
+        'gateway.authOAuth requires gateway.publicUrl: the token audience and the ' +
+          'protected-resource metadata URL are both derived from it',
+      );
+    }
+    const instance = new ResourceServer({
+      issuer: oauthConfig.issuer,
+      audience: oauthConfig.audience ?? new URL('/mcp', config.gateway.publicUrl).href,
+      ...(oauthConfig.jwksUri === undefined ? {} : { jwksUri: oauthConfig.jwksUri }),
+      ...(oauthConfig.scope === undefined ? {} : { scope: oauthConfig.scope }),
+      logger,
+    });
+    resourceServer = instance;
+    const publicUrl = config.gateway.publicUrl;
+
+    // verified: docs/ref/spec-2026-07-28-basic-authorization-index.md line 74-75 — MCP
+    //   servers MUST implement RFC 9728 protected resource metadata, and clients MUST use it
+    //   for authorization server discovery.
+    app.get('/.well-known/oauth-protected-resource/mcp', (_req: Request, res: Response) => {
+      res.setHeader('cache-control', 'public, max-age=300');
+      res.status(200).json(instance.protectedResourceMetadata(publicUrl, '/mcp', 'mcp-gateway'));
+    });
+    // The root form the spec lists as the alternative discovery location.
+    app.get('/.well-known/oauth-protected-resource', (_req: Request, res: Response) => {
+      res.setHeader('cache-control', 'public, max-age=300');
+      res.status(200).json(instance.protectedResourceMetadata(publicUrl, '/mcp', 'mcp-gateway'));
+    });
+
+    logger.info(
+      { issuer: resourceServer.issuer, audience: resourceServer.audience },
+      'OAuth protected resource enabled',
+    );
+  }
+
   // --- PLAN.md P6-1: the Client ID Metadata Document -------------------------------
   // Only registered when publicUrl is set. A gateway with no public URL has no identity to
   // publish, and serving a document whose client_id cannot be validated would be worse than
@@ -117,7 +160,7 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
       }
       void oauth
         .start(name)
-        .then((result) => {
+.then((result) => {
           if (result.authorized) {
             res.status(200).json({ upstream: name, authorized: true, method: result.method });
             return;
@@ -147,7 +190,7 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
           ...(typeof query['error'] === 'string' ? { error: query['error'] } : {}),
           ...(errorDescription === undefined ? {} : { errorDescription }),
         })
-        .then((result) => {
+.then((result) => {
           res.status(200).json({ upstream: result.upstreamName, authorized: true });
         })
         .catch((err: unknown) => {
@@ -163,6 +206,8 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
     const outcome = auth.authorize(req.headers.authorization);
     if (!outcome.ok) {
       logger.warn({ reason: outcome.reason }, 'unauthenticated GET /status');
+      // A static-key failure gets a bare challenge; the full RFC 9728 pointer is only
+      // meaningful to a client that can act on it, and `auth` here is the static path.
       res.setHeader('WWW-Authenticate', 'Bearer');
       res.status(401).json({ error: 'unauthorized' });
       return;
@@ -178,6 +223,14 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
         // The COUNT only: PLAN.md rule 9 forbids the values in /status.
         inboundAuthKeys: config.gateway.auth.keys.length,
         configuredUpstreams: Object.keys(config.mcp).length,
+        // S6.1: the ISSUER is not a secret (it is published in the metadata document), so
+        // it is safe and useful to report. No token, key or JWKS content ever appears here.
+        ...(oauthConfig === undefined
+          ? {}
+          : {
+              oauthIssuer: oauthConfig.issuer,
+              oauthAudience: resourceServer?.audience ?? null,
+            }),
       },
       upstreams: aggregator.manager.reports(),
     });
@@ -196,6 +249,35 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
     originValidation([...allowedOrigins]),
     (req: Request, res: Response, next: (err?: unknown) => void) => {
       const outcome = auth.authorize(req.headers.authorization);
+
+      if (!outcome.ok && resourceServer !== undefined) {
+        // PLAN.md S6.1 / ADR 0009: either credential is sufficient, and a failed OAuth check
+        // never falls back to being read as a static key (nor the reverse).
+        //
+        // `auth.authorize` has already consumed the header for the static path; re-extract
+        // it verbatim for the JWT. The token itself never reaches a log line.
+        void resourceServer
+          .verify(bearerOf(req.headers.authorization))
+  .then((result) => {
+            if (result.ok) {
+              nodeHandler(req, res, req.body as unknown).catch(next);
+              return;
+            }
+            // verified: docs/ref/spec-2026-07-28-basic-authorization-index.md lines 323 —
+            //   401 means "Authorization required or token invalid".
+            // verified: docs/ref/claude-connector-requirements.md — a 401 carrying
+            //   WWW-Authenticate is REQUIRED; the header is ignored on a 200.
+            res.setHeader(
+              'WWW-Authenticate',
+              resourceServer.challenge(config.gateway.publicUrl ?? '', '/mcp', result.reason),
+            );
+            logger.warn({ reason: result.reason }, 'rejected POST /mcp: OAuth');
+            res.status(401).json({ error: 'unauthorized' });
+          })
+          .catch(next);
+        return;
+      }
+
       if (!outcome.ok) {
         logger.warn({ reason: outcome.reason }, 'unauthenticated POST /mcp');
         res.setHeader('WWW-Authenticate', 'Bearer');
@@ -213,6 +295,18 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
     startFanout: built.startFanout,
     stopFanout: built.stopFanout,
   };
+}
+
+/**
+ * Extracts the bearer token from an Authorization header.
+ *
+ * verified: docs/ref/spec-2026-07-28-basic-authorization-index.md line 273 — access tokens
+ *   MUST NOT be included in the URI query string, so the header is the only place to look.
+ */
+function bearerOf(header: string | undefined): string | undefined {
+  if (header === undefined) return undefined;
+  const match = /^Bearer[ ]+(.+)$/i.exec(header.trim());
+  return match?.[1];
 }
 
 export { aggregateCallTool };

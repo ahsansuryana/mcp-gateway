@@ -103,13 +103,35 @@ export type UpstreamConfig = z.infer<typeof upstream>;
  */
 const legacyEra = z.enum(['stateless', 'reject']).default('stateless');
 
+/**
+ * PLAN.md S6.2 / docs/adr/0009-gateway-auth-oauth-variant.md: the gateway as an OAuth
+ * protected resource. Purely ADDITIVE — an existing config without this key is unchanged and
+ * static bearer keys keep working (D9).
+ *
+ * Named authOAuth, not oauth, because `mcp.<name>.oauth` already means the UPSTREAM side.
+ * Strict object: an unknown key is a startup error naming the path.
+ */
+const authOAuth = z.strictObject({
+  /** REQUIRED. Compared with the token's `iss` claim by simple string comparison. */
+  issuer: z.string().min(1, 'must not be empty'),
+  /**
+   * OPTIONAL. Defaults to `publicUrl` + `/mcp`, the canonical value Anthropic's documentation
+   * requires (docs/ref/claude-connector-requirements.md § 2.2).
+   */
+  audience: z.url('must be a valid absolute URL').optional(),
+  /** OPTIONAL. Discovered from the issuer's metadata when absent. */
+  jwksUri: z.url('must be a valid absolute URL').optional(),
+  /** OPTIONAL. Advertised in the `WWW-Authenticate` challenge. */
+  scope: z.string().min(1, 'must not be empty').optional(),
+});
+
 const gateway = z.strictObject({
   host: z.string().default('0.0.0.0'),
   port: z.int('must be an integer').min(1).max(65_535).default(3000),
   publicUrl: z.url('must be a valid absolute URL').optional(),
   auth: z.strictObject({
     type: z.literal('bearer').default('bearer'),
-    keys: z.array(z.string().min(1, 'must not be empty')).min(1, 'at least one key is required'),
+    keys: z.array(z.string().min(1, 'must not be empty')),
   }),
   defaultTimeoutMs: timeoutMs.default(30_000),
   defaultTtlMs: z
@@ -128,9 +150,32 @@ const gateway = z.strictObject({
  */
 const mcp = z.record(serverName, upstream);
 
+const gatewayWithAuth = gateway.extend({
+  /** PLAN.md S6.2 / ADR 0009. Optional; absent means "not an OAuth protected resource". */
+  authOAuth: authOAuth.optional(),
+});
+
+/**
+ * At least ONE inbound credential must exist.
+ *
+ * `keys` may now be empty (ADR 0009 lets OAuth stand alone), but an empty `keys` AND no
+ * `authOAuth` would leave `/mcp` open to anyone who can reach the port. That combination is
+ * rejected at startup rather than discovered in production.
+ */
+const gatewayGuarded = gatewayWithAuth.superRefine((value, ctx) => {
+  if (value.auth.keys.length === 0 && value.authOAuth === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['auth', 'keys'],
+      message:
+        'at least one inbound credential is required: set gateway.auth.keys or gateway.authOAuth',
+    });
+  }
+});
+
 export const gatewayConfigSchema = z.strictObject({
   $schema: z.string().optional(),
-  gateway,
+  gateway: gatewayGuarded,
   mcp,
 });
 
