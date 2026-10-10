@@ -62,3 +62,15 @@ owns. PLAN.md §3 rule 8: anything out of scope goes here instead of into code.
 | B-21 | `UpstreamManager` retries a `failed` upstream at most once per 30 s, triggered by incoming traffic (S2.1). S4.3 reuses the same rule for stdio upstreams; verify they share one implementation rather than two. | S2.1 / S4.3 | S4.3 |
 | B-22 | The gateway currently never sets `tools.listChanged`, so a `tools/list` consumer must poll or rely on `ttlMs`. S3.4 turns this on. | S2.4 | S3.4 — **CLOSED in S3.4** |
 | B-23 | `x-mcp-header` tool-parameter mirroring (B-05) is still undecided; the gateway currently forwards `inputSchema` verbatim, including any `x-mcp-header` annotation. A client that honours it will send `Mcp-Param-*` headers the gateway does not validate. | S2.3 | S2.5/S3 |
+## From Sprint 4
+
+| ID | Item | Origin | Suggested home |
+|---|---|---|---|
+| B-28 | **Dockerfile must resolve the `procps` gap.** `tree-kill` builds a POSIX process tree by shelling out to `ps`, which lives in the `procps` package. On `node:24-bookworm-slim` the call fails with `spawn ps ENOENT`, raised from inside the dependency's own error handler where a `try/catch` cannot intercept it, so it escapes as an uncaught exception during shutdown. The gateway currently degrades to a direct-child `SIGKILL` and logs `process tree kill degraded to direct child` at `warn` (Q-PROCPS). For S7.4's Dockerfile, **choose between (a) installing `procps` and (b) replacing the `ps`-based tree kill with a process-group (`setsid` / negative-PID) approach on Linux.** Either is acceptable; what is NOT acceptable is shipping the image without verifying which one actually works in it. | S4.5 / Q-PROCPS | S7.4 |
+| B-29 | **The Docker daemon is a remote Linux host (Armbian), not Docker Desktop.** `F:\mcp-gateway` cannot be bind-mounted into a Linux container: `-v F:\mcp-gateway:/work` fails with `invalid mount path: 'F:/mcp-gateway' mount path must be absolute` because the daemon does not see the Windows drive. Source must travel via the build context (`docker build`), `docker cp`, or a tar stream into the container. Under MSYS/Git Bash both `tar` and `docker` also mangle absolute POSIX arguments — `MSYS_NO_PATHCONV=1` is required. Any S7 script or CI job that assumes a bind mount will fail on this host. | S4 Linux verification | S7.4 / CI |
+
+## From Sprint 4 follow-up (pre-Sprint 5)
+
+| ID | Item | Origin | Suggested home |
+|---|---|---|---|
+| B-30 | **B-24 integrity pass — DONE at the Sprint 5 gate.** Closed in `f627199`: closed subscriptions now withdraw their `listChanged` contribution, and `prompts`/`resources` list-changed events are actually relayed. Kept here for traceability only. | human instruction | closed |

@@ -100,9 +100,15 @@ These were real bugs, not test-harness problems.
 - **A missing binary is `error`, not `failed`, on first start.** By design: `failed` is
   reached by repetition (S4.3), because the SDK gives no signal to distinguish it from a
   crash.
-- **Commit `8d44729` bundles S4.1/S4.3/S4.4** in one commit rather than one per task ID,
-  as it was written before the test suite existed to define the seams. Subsequent work is
-  split per task.
+### Known deviation (ratified by the human at the Sprint 5 gate)
+
+- **Commit `8d44729` bundles S4.1/S4.3/S4.4** in one commit rather than one per task ID. It
+  was written before the test suite existed to define the seams between those tasks.
+
+  **Decision: history is NOT rewritten.** The human reviewed this and chose to record it as a
+  known deviation instead. From the Sprint 5 gate onward the one-commit-per-task-ID rule
+  (PLAN.md §3 rule 10) is strictly enforced: a change that would cross task IDs is split
+  before committing.
 
 ## Verification commands
 
