@@ -1,0 +1,206 @@
+// PLAN.md S2.1: one Upstream per enabled config entry, a status machine, and lazy
+// reconnect with exponential backoff 1s..30s (cap).
+//
+// D8: one broken upstream never breaks the others. Failures are contained per upstream
+// and surfaced through `/status`, never by failing the whole gateway.
+
+import type { GatewayConfig, UpstreamConfig } from '../config/schema.js';
+import { RemoteUpstream } from './remote.js';
+import type { ToolListResult, Upstream, UpstreamStatusInfo } from './types.js';
+
+// PLAN.md S2.1: exponential backoff from 1s, capped at 30s.
+export const BACKOFF_BASE_MS = 1_000;
+export const BACKOFF_MAX_MS = 30_000;
+/** After this many consecutive failures the upstream is parked in `failed`. */
+export const MAX_CONSECUTIVE_FAILURES = 5;
+/** A `failed` upstream is retried at most this often, on incoming traffic (S4.3 rule). */
+export const FAILED_RETRY_INTERVAL_MS = 30_000;
+
+export interface UpstreamManagerOptions {
+  secrets?: readonly string[];
+  now?: () => number;
+  /** Injectable so tests can drive the backoff without waiting. */
+  setTimeoutFn?: (fn: () => void, ms: number) => unknown;
+  clearTimeoutFn?: (handle: unknown) => void;
+  /** Build a custom Upstream for one entry (used by Sprint 4's stdio upstreams and tests). */
+  factory?: (name: string, config: UpstreamConfig, defaultTimeoutMs: number) => Upstream;
+}
+
+export interface UpstreamReport {
+  name: string;
+  kind: 'remote' | 'local';
+  status: UpstreamStatusInfo;
+}
+
+interface Entry {
+  upstream: Upstream;
+  failures: number;
+  /** Set while a backoff timer is pending. */
+  retryHandle: unknown;
+  lastFailureAt: number;
+}
+
+export class UpstreamManager {
+  readonly #config: GatewayConfig;
+  readonly #entries = new Map<string, Entry>();
+  readonly #options: UpstreamManagerOptions;
+
+  constructor(config: GatewayConfig, options: UpstreamManagerOptions = {}) {
+    this.#config = config;
+    this.#options = options;
+
+    for (const [name, upstreamConfig] of Object.entries(config.mcp)) {
+      if (!upstreamConfig.enabled) continue;
+      const upstream = this.#create(name, upstreamConfig);
+      this.#entries.set(name, { upstream, failures: 0, retryHandle: undefined, lastFailureAt: 0 });
+    }
+  }
+
+  get names(): string[] {
+    return [...this.#entries.keys()];
+  }
+
+  get(name: string): Upstream | undefined {
+    return this.#entries.get(name)?.upstream;
+  }
+
+  status(name: string): UpstreamStatusInfo | undefined {
+    return this.#entries.get(name)?.upstream.status();
+  }
+
+  /** The payload behind `GET /status` (D9: auth-protected, never contains secrets). */
+  reports(): UpstreamReport[] {
+    return [...this.#entries.entries()].map(([name, entry]) => ({
+      name,
+      kind: entry.upstream.kind,
+      status: entry.upstream.status(),
+    }));
+  }
+
+  /** Starts every upstream concurrently; a failure in one never rejects the others (D8). */
+  async start(): Promise<void> {
+    await Promise.all([...this.#entries.values()].map((e) => this.#startEntry(e)));
+  }
+
+  async stop(): Promise<void> {
+    for (const entry of this.#entries.values()) {
+      this.#clearRetry(entry);
+      await entry.upstream.stop().catch(() => undefined);
+    }
+  }
+
+  /**
+   * Fans out to every ready upstream and returns the results of the healthy ones (D8).
+   * Broken upstreams are recorded and simply absent from `results`.
+   */
+  async listAllTools(signal: AbortSignal): Promise<Map<string, ToolListResult>> {
+    const results = new Map<string, ToolListResult>();
+
+    await Promise.all(
+      [...this.#entries.values()].map(async (entry) => {
+        if (entry.upstream.status().state !== 'ready') {
+          await this.#ensureStarted(entry);
+          if (entry.upstream.status().state !== 'ready') return;
+        }
+        try {
+          results.set(entry.upstream.name, await entry.upstream.listTools(signal));
+          this.#recordSuccess(entry);
+        } catch {
+          // D8: this upstream is dropped; `reports()` already shows why.
+          this.#recordFailure(entry);
+        }
+      }),
+    );
+
+    return results;
+  }
+
+  /**
+   * Makes sure a not-ready upstream has had its chance (lazy reconnect, PLAN.md S2.1).
+   * Called from the request path so a `failed` upstream gets at most one retry per 30s.
+   */
+  async #ensureStarted(entry: Entry): Promise<void> {
+    const state = entry.upstream.status().state;
+    if (state === 'starting' || state === 'ready') return;
+    if (state === 'disabled') return;
+
+    if (state === 'failed') {
+      const elapsed = this.#now() - entry.lastFailureAt;
+      if (elapsed < FAILED_RETRY_INTERVAL_MS) return;
+    }
+    await this.#startEntry(entry);
+  }
+
+  async #startEntry(entry: Entry): Promise<void> {
+    this.#clearRetry(entry);
+    await entry.upstream.start().catch(() => undefined);
+    const state = entry.upstream.status().state;
+    if (state === 'ready') {
+      entry.failures = 0;
+      return;
+    }
+    if (state === 'disabled') return;
+    entry.lastFailureAt = this.#now();
+    this.#scheduleRetry(entry);
+  }
+
+  #recordSuccess(entry: Entry): void {
+    entry.failures = 0;
+    this.#clearRetry(entry);
+  }
+
+  /**
+   * Counts a failure, parks the upstream in `failed` after
+   * `MAX_CONSECUTIVE_FAILURES`, and otherwise arms the exponential backoff.
+   */
+  #recordFailure(entry: Entry): void {
+    entry.failures += 1;
+    entry.lastFailureAt = this.#now();
+    if (entry.failures >= MAX_CONSECUTIVE_FAILURES) {
+      entry.upstream.stop().catch(() => undefined);
+      this.#clearRetry(entry);
+      return;
+    }
+    this.#scheduleRetry(entry);
+  }
+
+  #scheduleRetry(entry: Entry): void {
+    if (entry.retryHandle !== undefined) return;
+    const delay = backoffFor(entry.failures);
+    const setTimer = this.#options.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
+    entry.retryHandle = setTimer(() => {
+      entry.retryHandle = undefined;
+      void this.#startEntry(entry);
+    }, delay);
+  }
+
+  #clearRetry(entry: Entry): void {
+    if (entry.retryHandle === undefined) return;
+    const clear = this.#options.clearTimeoutFn ?? ((h: unknown) => clearTimeout(h as NodeJS.Timeout));
+    clear(entry.retryHandle);
+    entry.retryHandle = undefined;
+  }
+
+  #now(): number {
+    return (this.#options.now ?? Date.now)();
+  }
+
+  #create(name: string, upstreamConfig: UpstreamConfig): Upstream {
+    if (this.#options.factory !== undefined) {
+      return this.#options.factory(name, upstreamConfig, this.#config.gateway.defaultTimeoutMs);
+    }
+    if (upstreamConfig.type !== 'remote') {
+      throw new Error(`upstream '${name}' is ${upstreamConfig.type}; only remote upstreams exist in Sprint 2`);
+    }
+    const remoteOptions: { secrets?: readonly string[]; now?: () => number } = {};
+    if (this.#options.secrets !== undefined) remoteOptions.secrets = this.#options.secrets;
+    if (this.#options.now !== undefined) remoteOptions.now = this.#options.now;
+    return new RemoteUpstream(name, upstreamConfig, this.#config.gateway.defaultTimeoutMs, remoteOptions);
+  }
+}
+
+/** 1s, 2s, 4s, 8s, 16s, 30s, 30s, ... */
+export function backoffFor(failures: number): number {
+  const exponent = Math.max(0, failures - 1);
+  return Math.min(BACKOFF_BASE_MS * 2 ** exponent, BACKOFF_MAX_MS);
+}
