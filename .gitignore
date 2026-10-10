@@ -1,4 +1,14 @@
 node_modules/
-data/
+dist/
+coverage/
+
+# PLAN.md rule 10: never commit a config that can hold real secrets.
 gateway.json
+
+# Runtime state (OAuth token store, Sprint 5+).
+data/
+
 *.log
+.DS_Store
+.env
+.env.*
