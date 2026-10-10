@@ -1,7 +1,7 @@
 # ADR 0003 — MRTR elicitation: static upstream declaration vs per-request downstream clients
 
-- Status: Proposed — **STUB, no workaround implemented** (human instruction for the pre-Sprint-4 step)
-- Date: 2026-10-10
+- Status: **Proposed — decision recommended, NOT implemented** (human instruction: propose, do not implement in Sprint 5)
+- Date: 2026-10-10 (Sprint 5 pre-step, completed with Sprint 4 S4.7 live evidence)
 - Addresses: PLAN.md §5 "MRTR proxy requirements" point **(c)**, an open risk found in Sprint 3
 
 ## Context
@@ -35,6 +35,57 @@ Consequence: the gateway CAN observe what a downstream client declared for a giv
 (`ctx.mcpReq.envelope`), but CANNOT tell an upstream "this particular downstream client does
 not support elicitation", because the upstream-facing envelope is static.
 
+## Live evidence from S4.7
+
+Sprint 4 S4.7 connected the vendor reference server
+`@modelcontextprotocol/server-everything@2026.8.31` through the production `StdioUpstream`
+(transcript: `spikes/out-s4-7.txt`).
+
+The gateway's upstream client declares `capabilities: { elicitation: {} }` (S3.5), and:
+
+```
+tools/list -> echo, get-annotated-message, get-env, get-resource-links, ...
+             trigger-elicitation-request, simulate-research-query
+
+tools/call trigger-elicitation-request
+  -> {"content":[{"type":"text","text":"MCP error -32601: Method not found"}],"isError":true}
+```
+
+### What this proves
+
+The tool is **advertised** by a server built with the same SDK generation, so the failure is
+not a missing tool and not a protocol-version mismatch. The same SDK's client, declaring
+`elicitation`, still receives JSON-RPC `-32601 Method not found` when the tool is invoked.
+
+That is consistent with exactly one documented rule:
+
+> "Servers **MUST NOT** send an `inputRequests` that the client has not declared support for
+> in its capabilities. For example, if a client does not declare support for `elicitation`,
+> the server **MUST NOT** include any `elicitation/create` requests in the `inputRequests`
+> field."
+> — verified: `docs/ref/spec-2026-07-28-basic-patterns-mrtr.md`, Server Requirements §7
+
+The consequence of the gateway declaring `elicitation` upstream is therefore observable on
+real traffic: a server that checks declarations strictly may answer a tool it just listed
+with `-32601`, because it does not agree with the gateway about *which* capability is
+declared, or because it re-validates the envelope at call time.
+
+### What this does NOT prove
+
+- It does **not** prove the failure is caused by the gateway's `elicitation` declaration.
+  The transcript records the request/response only; the server's internal reason is not
+  visible. A server that refuses an elicitation-capable client for a different reason, or
+  whose tool fails for its own reasons, would produce the same wire result.
+- It does **not** prove option (C) below is viable.
+- It does **not** characterise the ORIGINAL risk in this ADR, which is about a *downstream*
+  client that never declared elicitation. S4.7 exercised a stdio upstream with no downstream
+  client in the path at all.
+- It does **not** show `-32601` being returned for an `input_required` result. No
+  `input_required` result was produced at all; the tool never got that far.
+
+The honest reading is that S4.7 surfaced a **second, distinct** problem (an elicitation tool
+that fails for an elicitation-capable client) *adjacent* to the one this ADR was opened for.
+
 ## Consequences of doing nothing
 
 1. An upstream may return `input_required` with `elicitation/create` for a request whose
@@ -49,6 +100,10 @@ The last point is the actual trade-off: a static declaration is a **superset** s
 gateway accepts capability checks it may not be able to satisfy for some requests, in exchange
 for being able to satisfy them for the requests that do support it.
 
+The S4.7 observation adds a fifth consequence: the superset strategy is not free even when
+the downstream client DOES support elicitation, because a strict upstream can reject the
+gateway's declaration outright.
+
 ## Options (NOT chosen — recorded for the human)
 
 - **(A) Keep the static declaration (status quo).** Simplest, and the superset behaviour is
@@ -62,16 +117,33 @@ for being able to satisfy them for the requests that do support it.
   decision; it is exactly the kind of custom wire-format code PLAN.md rule 5 guards against.
 - **(D) Reject a `tools/call` whose downstream envelope lacks `elicitation` when the upstream
   has previously returned `input_required`.** Stateful and unreliable; also a heuristic.
+- **(E) NEW, from the S4.7 evidence — degrade on `-32601` for an advertised elicitation
+  tool.** Treat a `-32601` from a tool whose description promises elicitation as an upstream
+  capability mismatch and surface a clear error naming the upstream, rather than passing a
+  bare `-32601` to the client. This does not fix either problem; it only makes the failure
+  legible. It is cheap and carries no protocol risk.
 
-## Decision
+## Recommendation
 
-**No decision yet.** The human instruction was: investigate, record, and do NOT implement a
-workaround in Sprint 4. Option (A) is the current behaviour and the recommendation for now.
+**Adopt (A) for the declared-capability risk, and adopt (E) as a diagnostic-only improvement.**
+Options (B), (C) and (D) are rejected for the reasons above.
+
+Concretely, proposed for a future sprint with an ADR of its own:
+
+1. Keep `capabilities: { elicitation: {} }` on the gateway's upstream client. MRTR cannot work
+   without it, and the spec's rule 7 is a rule about what servers *send*, so the gateway must
+   offer the capability it might need.
+2. Log a `warn` when an upstream answers `-32601` for a tool call, naming the upstream and the
+   tool but no argument values, so the capability mismatch is visible in `/status` terms
+   without leaking anything.
 
 ## What must happen before this can be closed
 
-- A real downstream client without elicitation must be observed returning `input_required`
-  through the gateway, so the failure mode is characterised rather than predicted.
+- A real **downstream** client without elicitation must be observed returning
+  `input_required` through the gateway, so the original failure mode is characterised rather
+  than predicted. S4.7 did not do this.
+- The `@modelcontextprotocol/server-everything` `-32601` needs a cause. Ask the SDK/vendor team,
+  or reproduce against a server whose source shows the check, before any conclusion is drawn.
 - Confirm with the SDK team (or the SDK's issue tracker) whether a per-request outbound
   envelope is planned, since (C) becomes unnecessary if it lands.
 
@@ -80,3 +152,5 @@ workaround in Sprint 4. Option (A) is the current behaviour and the recommendati
 - PLAN.md §5 "MRTR proxy requirements" (a), (b), (c).
 - `docs/OPEN-QUESTIONS.md` Q-MRTRPROXY.
 - `docs/SDK-NOTES.md` (f).
+- `spikes/out-s4-7.txt` — the transcript this ADR's live evidence comes from.
+- `docs/BACKLOG.md` B-26.
