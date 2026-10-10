@@ -344,3 +344,63 @@ specifically the *metadata document*, which must be `https` and publicly reachab
   the hosting and its TLS.
 
 **Decision needed (human, before CIMD can be exercised):** which of (a), (b) or (c).
+
+---
+
+## Q-SDK-RESOURCE — the SDK sends no `resource` parameter (found in Sprint 5 S5.6)
+
+The spec is unambiguous:
+
+> "MCP clients **MUST** implement Resource Indicators for OAuth 2.0 … The `resource`
+> parameter: 1. **MUST** be included in both authorization requests and token requests …"
+> "MCP clients **MUST** send this parameter regardless of whether authorization servers
+> support it."
+> — verified: `docs/ref/spec-2026-07-28-basic-authorization-index.md` lines 219-222 and 254
+
+Measured against the in-repo fake authorization server (`test/fixtures/fake-auth-server.ts`),
+which advertises `resource` in its protected-resource metadata:
+
+- the authorization URL the SDK builds contains **no** `resource` query parameter;
+- the token request contains **no** `resource` parameter either
+  (`test/integration/oauth-flow.integration.test.ts`, "S5.6 resource parameter — SDK
+  DEVIATION, recorded" — the test asserts the observed defect on purpose).
+
+`@modelcontextprotocol/client` 2.3.1 was used for the measurement.
+
+**Why the gateway does not work around it.** Making `resource` appear would mean
+constructing the authorization URL and the token request body by hand. The human's S5.3
+instruction is explicit: do not implement PKCE, discovery or token exchange by hand if the
+SDK does it, and justify any hand-rolled part in an ADR. This is a judgement call that
+belongs to the human, not to the implementation agent.
+
+**Options:**
+
+- (a) Ship as is and log the deviation. Authorization servers that require `resource` (RFC
+  8707 "MAY be required") will reject or issue over-broad tokens.
+- (b) ADR permitting a narrow hand-rolled `resource` parameter on top of the SDK.
+- (c) Ask the SDK team whether this is a bug in 2.3.1 and track a fix.
+
+**Decision needed (human):** (a), (b) or (c).
+
+---
+
+## Q-SDK-REFRESH — `auth()` defeats the 60s refresh skew (found in Sprint 5 S5.6, worked around)
+
+PLAN.md S5.5 asks for a refresh **60 seconds before** expiry. The SDK's `auth()` orchestrator
+decides between the refresh grant and a fresh authorization using its own expiry check, so a
+token inside the gateway's skew window is judged by a different rule.
+
+Measured against the S5.6 fake with a token 5 seconds from expiry: `auth()` returned
+`REDIRECT`, i.e. it asked for a **new user consent** instead of using the refresh token the
+gateway already held.
+
+**Worked around, not hand-rolled.** `refreshIfNeeded` calls the SDK's own
+`refreshAuthorization()` free function instead of `auth()`:
+
+> verified: `node_modules/@modelcontextprotocol/client/dist/index.d.mts`
+> (`refreshAuthorization` — "Exchange a refresh token for an updated access token")
+
+The gateway still owns *when* to refresh (the 60s skew); the SDK still owns *how*.
+
+**No decision needed** unless the human prefers a single `auth()` entry point. Recorded for
+traceability.

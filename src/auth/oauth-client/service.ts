@@ -9,6 +9,8 @@
 // exchange are all delegated to the SDK through `runAuthorization`.
 
 import type { Logger } from '../../observability/logger.js';
+import { refreshAuthorization } from '@modelcontextprotocol/client';
+
 import type { GatewayConfig, RemoteUpstreamConfig } from '../../config/schema.js';
 import { GatewayOAuthProvider, runAuthorization, type RegistrationMethod } from './provider.js';
 import type { TokenStore } from './token-store.js';
@@ -243,6 +245,7 @@ export class OAuthService {
     if (provider === undefined || issuer === undefined) return false;
 
     const record = await this.#options.store.get(name, issuer);
+    const info = await this.clientInformationFor(name, issuer);
     // MUST NOT assume refresh tokens will be issued.
     // verified: docs/ref/spec-2026-07-28-basic-authorization-index.md line 311
     if (record === undefined || record.refreshToken === undefined) return false;
@@ -251,11 +254,38 @@ export class OAuthService {
     if (!needsRefresh(record.expiresAt, now)) return false;
 
     provider.setIssuer(issuer);
-    provider.restoreTokens(record);
 
     try {
-      const outcome = await runAuthorization(provider, {}, this.#options.logger);
-      return outcome.result === 'AUTHORIZED';
+      // The SDK's `refreshAuthorization()` is used directly rather than `auth()`.
+      //
+      // `auth()` decides between refresh and a fresh authorization using its OWN expiry
+      // check. A token inside the gateway's 60s skew still looks valid to the SDK, so it
+      // either refreshes too late or returns 'REDIRECT' and demands a new consent — which
+      // defeats the point of refreshing. Verified against the S5.6 fake: a token with 5s
+      // remaining made `auth()` return 'REDIRECT'.
+      //
+      // verified: node_modules/@modelcontextprotocol/client/dist/index.d.mts
+      //   (refreshAuthorization — "Exchange a refresh token for an updated access token",
+      //    preserving the original refresh token when a new one is not returned)
+      const refreshed = await refreshAuthorization(issuer, {
+        clientInformation: info ?? { client_id: '' },
+        refreshToken: record.refreshToken,
+        ...(this.resourceFor(name) === undefined ? {} : { resource: this.resourceFor(name)! }),
+      });
+
+      await provider.saveTokens(
+        {
+          access_token: refreshed.access_token,
+          token_type: refreshed.token_type,
+          ...(refreshed.refresh_token === undefined ? {} : { refresh_token: refreshed.refresh_token }),
+          ...(refreshed.scope === undefined ? {} : { scope: refreshed.scope }),
+          ...(refreshed.expires_in === undefined
+            ? {}
+            : { expires_in: refreshed.expires_in }),
+        },
+        { issuer },
+      );
+      return true;
     } catch (err) {
       // The failure reason is safe to log: SDK OAuth errors name the endpoint and the
       // OAuth error code, never the token. The token itself is never interpolated.
@@ -269,6 +299,23 @@ export class OAuthService {
       await this.#options.store.delete(name, issuer);
       return false;
     }
+  }
+
+  /** The upstream's configured URL, which is also the RFC 8707 `resource`. */
+  /** Public: used by `refreshIfNeeded` and testable on its own. */
+  resourceFor(name: string): string | undefined {
+    const upstream = this.#options.config.mcp[name];
+    return upstream?.type === 'remote' ? upstream.url : undefined;
+  }
+
+  private async clientInformationFor(name: string, issuer: string) {
+    const upstream = this.#options.config.mcp[name];
+    if (upstream?.type === 'remote' && typeof upstream.oauth === 'object' && upstream.oauth.clientId !== undefined) {
+      return { client_id: upstream.oauth.clientId, ...(upstream.oauth.clientSecret === undefined ? {} : { client_secret: upstream.oauth.clientSecret }) };
+    }
+    const record = await this.#options.store.get(name, issuer);
+    if (record === undefined || record.clientId === '') return undefined;
+    return { client_id: record.clientId, ...(record.clientSecret === undefined ? {} : { client_secret: record.clientSecret }) };
   }
 
   /**
