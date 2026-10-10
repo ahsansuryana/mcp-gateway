@@ -89,6 +89,7 @@ Facts below were read from primary sources on 2026-10-10. Re-verify in Sprint 0 
 | D14 | Logging: `pino` JSON logs, with a redaction list covering `authorization`, `headers`, `environment`, `token`, `apiKey`, `secret`, `password`, `cookie`. | Secret safety. |
 | D15 | Tests: `vitest`. Unit tests use no network. E2E tests spin up fake upstream servers built with the SDK inside `test/fixtures/`. | Deterministic CI. |
 | D16 | Web framework: Express with the SDK's Express middleware if it exists and fits; otherwise `@modelcontextprotocol/node` with Node `http`. Decide in Sprint 0 from evidence, record in an ADR. | The author knows Express; SDK middleware reduces custom transport code. |
+| D17 | Subscription fan-out policy: (1) bursts inside 250 ms coalesce into ONE `notifications/tools/list_changed`; (2) an UPSTREAM list-changed push is ALWAYS relayed after the recompute, because the upstream may have changed a description or schema invisible to the name set; (3) an upstream STATUS transition notifies only when the merged name set actually changed, so flapping cannot spam clients. The gateway's own advertised `listChanged` bits are derived from what the open upstream subscriptions ACTUALLY honoured, so a downstream acknowledgement never claims more than was honoured. | Decided at the Sprint 3 gate; addresses Q-SUBSFWD and B-24. |
 
 ---
 
@@ -162,6 +163,29 @@ interface Upstream {
 - `server/discover`: answered by the gateway itself: identity `mcp-gateway`, capabilities derived from what healthy upstreams provide (tools/resources/prompts, list-changed support). Implementation comes from the SDK; do not hand-roll the wire format.
 - `tools/list`: fan out to all `ready` upstreams in parallel, each with `timeout`; collect; prefix names (D4); drop over-length names; sort ascending by namespaced name; set `ttlMs`/`cacheScope` (D11).
 - `tools/call`: split the name at the first `_`; unknown server or tool => protocol error (verify code); strip prefix; forward `arguments` untouched; forward `_meta` entries needed for progress and trace context (`progressToken`, `traceparent`, `tracestate`, `baggage`); wire the downstream AbortSignal to the upstream call; return the upstream result unchanged. If the result is `input_required` (MRTR), forward it UNCHANGED, including `requestState`. The client's retry arrives as a normal new `tools/call` and is routed the same way. The gateway keeps no MRTR state.
+
+#### MRTR proxy requirements (amended in Sprint 3, ratified at the Sprint 3 gate)
+
+Three requirements the `tools/call` paragraph above does not state. All three are load-bearing;
+without any one of them MRTR through a gateway fails. Sources are cited in
+`docs/SDK-NOTES.md` (f) and `docs/adr/0003-mrtr-elicitation-capability.md`.
+
+- **(a) Re-attach the multi-round-trip fields.** `inputResponses` and `requestState` are
+  siblings of `arguments` in the request params, NOT `_meta` entries, and the SDK's server
+  seam lifts both out of `params` before the handler runs. A proxy `tools/call` handler must
+  therefore rebuild the upstream call params from `ctx.mcpReq.inputResponses` and
+  `ctx.mcpReq.requestState()`, and must call the upstream with `allowInputRequired: true` so
+  the interim result is handed back instead of auto-fulfilled or raised.
+- **(b) The gateway's upstream client must declare `elicitation`.** On an `input_required`
+  result the SDK server seam checks the REQUEST's declared client capabilities and answers
+  `-32021 MissingRequiredClientCapability` for anything undeclared. A gateway client that does
+  not declare `elicitation` therefore never sees the upstream's `input_required` result at all.
+- **(c) OPEN RISK — the static declaration vs downstream clients without elicitation.** Because
+  (b) is a STATIC declaration on the gateway's upstream client, the gateway will advertise to
+  the upstream that it supports elicitation even when the actual downstream client for this
+  particular request does not. The gateway cannot currently narrow that per request. Recorded
+  in `docs/adr/0003-mrtr-elicitation-capability.md`; the fix must not be attempted without a
+  decision.
 
 ---
 
@@ -326,8 +350,22 @@ Code + tests + `npm run typecheck && npm run lint && npm test` green + external 
 ---
 
 ## 9. Open questions for the human
-- **Q1** Support legacy HTTP+SSE upstreams? Default: no (deprecated in the spec). Some older remote servers only offer SSE.
-- **Q2** Must the gateway also serve clients that speak 2025-era MCP (with `initialize` and sessions)? Default: yes IF the SDK v2 provides it without custom code; otherwise 2026-07-28 only, recorded in an ADR. (Decided after S0.3(j).)
-- **Q3** Sprint 6 architecture (GATE S6.0): external authorization server (A) or embedded (B)?
-- **Q4** Hosting target and public hostname (for `publicUrl`, TLS termination, Origin allowlist).
-- **Q5** Is the tasks extension (`io.modelcontextprotocol/tasks`) needed for any upstream you plan to use?
+
+**RESOLVED at the Sprint 3 gate (2026-10-10).** Each resolution has an ADR.
+
+- **Q1 — RESOLVED: NO legacy HTTP+SSE upstreams.** A remote upstream that only speaks
+  HTTP+SSE must fail with a clear error naming the upstream (never a secret from the URL) and
+  report state `error`. No fallback is implemented. → `docs/adr/0004-no-http-sse-upstreams.md`
+- **Q2 — RESOLVED (Sprint 0 gate).** Serve 2025-era clients, via `gateway.legacyEra`
+  defaulting to `'stateless'`. → `docs/adr/0002-protocol-compatibility.md`
+- **Q3 — RESOLVED: option A.** Sprint 6's gateway is an OAuth RESOURCE SERVER ONLY and
+  validates tokens from an EXTERNAL authorization server. An embedded authorization server
+  (option B) is out of scope and MUST NOT be built. S6.0 therefore requires no further human
+  decision; the ADR is written when Sprint 6 starts. → `docs/adr/0005-inbound-oauth-resource-server.md`
+- **Q4 — STILL OPEN.** Hosting target and public hostname (for `publicUrl`, TLS termination,
+  Origin allowlist). Until it is answered, the Origin allowlist stays localhost-only and no
+  hostname may be invented.
+- **Q5 — RESOLVED: NO tasks extension.** The gateway never declares
+  `io.modelcontextprotocol/tasks` toward upstreams or downstream. If an upstream returns a
+  task handle anyway, the gateway answers with a tool result carrying `isError: true` and a
+  short explanation, and logs a warning naming the upstream. → `docs/adr/0006-no-tasks-extension.md`
