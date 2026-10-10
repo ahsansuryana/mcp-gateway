@@ -29,7 +29,13 @@ import type {
 import type { LocalUpstreamConfig } from '../config/schema.js';
 import { scrubSecrets } from '../observability/logger.js';
 import type { Logger } from '../observability/logger.js';
-import type { ToolListResult, Upstream, UpstreamStatus, UpstreamStatusInfo } from './types.js';
+import type {
+  ListChangedKind,
+  ToolListResult,
+  Upstream,
+  UpstreamStatus,
+  UpstreamStatusInfo,
+} from './types.js';
 import { killProcessTree } from './process-tree.js';
 
 /** S4.4: stderr lines are truncated to this many characters before logging. */
@@ -330,15 +336,17 @@ export class StdioUpstream implements Upstream {
     });
   }
 
-  onListChanged(handler: () => void): () => void {
+  onListChanged(handler: (kind: ListChangedKind) => void): () => void {
     const client = this.#client;
     if (client === undefined) return () => undefined;
-    for (const method of [
-      'notifications/tools/list_changed',
-      'notifications/prompts/list_changed',
-      'notifications/resources/list_changed',
+    // verified: node_modules/@modelcontextprotocol/client/dist/index.d.mts
+    //   (Client.setNotificationHandler dispatches per method)
+    for (const [method, kind] of [
+      ['notifications/tools/list_changed', 'tools'],
+      ['notifications/prompts/list_changed', 'prompts'],
+      ['notifications/resources/list_changed', 'resources'],
     ] as const) {
-      client.setNotificationHandler(method, () => handler());
+      client.setNotificationHandler(method, () => handler(kind));
     }
     return () => undefined;
   }

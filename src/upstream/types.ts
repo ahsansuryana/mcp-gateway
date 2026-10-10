@@ -144,11 +144,22 @@ export interface Upstream {
    * `notifications/prompts/list_changed` and `notifications/resources/list_changed`, and
    * returns an unsubscribe function.
    *
+   * The handler receives WHICH list changed. B-24(b) found that a single parameterless
+   * callback made it impossible to relay a prompt change without also claiming a tool
+   * change, which is how the gateway ended up advertising prompt and resource
+   * `listChanged` while only ever publishing `notifications/tools/list_changed`.
+   *
    * verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
    *   (Client.setNotificationHandler(method, handler))
    */
-  onListChanged?(handler: () => void): () => void;
+  onListChanged?(handler: (kind: ListChangedKind) => void): () => void;
 }
+
+/**
+ * Which list a `notifications/*\/list_changed` event refers to.
+ * verified: docs/ref/spec-2026-07-28-basic-patterns-subscriptions.md (Notification Filter)
+ */
+export type ListChangedKind = 'tools' | 'prompts' | 'resources';
 
 /**
  * S3.1: resource templates are a NON-GOAL (PLAN.md §1), so the gateway never advertises

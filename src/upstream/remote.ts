@@ -11,7 +11,13 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/server';
 
 import { scrubSecrets } from '../observability/logger.js';
 import type { RemoteUpstreamConfig } from '../config/schema.js';
-import type { ToolListResult, Upstream, UpstreamStatus, UpstreamStatusInfo } from './types.js';
+import type {
+  ListChangedKind,
+  ToolListResult,
+  Upstream,
+  UpstreamStatus,
+  UpstreamStatusInfo,
+} from './types.js';
 
 export interface RemoteUpstreamOptions {
   /** Literal secret values, so an upstream error can never echo one back. */
@@ -205,17 +211,20 @@ export class RemoteUpstream implements Upstream {
    * verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
    *   (Client.setNotificationHandler(method, handler))
    */
-  onListChanged(handler: () => void): () => void {
+  onListChanged(handler: (kind: ListChangedKind) => void): () => void {
     const client = this.#requireClient();
+    // verified: node_modules/@modelcontextprotocol/client/dist/index.d.mts
+    //   (setNotificationHandler dispatches per method; Client.listen routes stream
+    //    notifications to these same registrations, so listen() alone delivers nothing)
     const methods = [
-      'notifications/tools/list_changed',
-      'notifications/prompts/list_changed',
-      'notifications/resources/list_changed',
+      ['notifications/tools/list_changed', 'tools'],
+      ['notifications/prompts/list_changed', 'prompts'],
+      ['notifications/resources/list_changed', 'resources'],
     ] as const;
 
-    for (const method of methods) {
+    for (const [method, kind] of methods) {
       client.setNotificationHandler(method, () => {
-        handler();
+        handler(kind);
       });
     }
     return () => {

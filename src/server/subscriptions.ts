@@ -21,6 +21,7 @@
 import type { Logger } from '../observability/logger.js';
 import type { UpstreamManager } from '../upstream/manager.js';
 import type { ToolsAggregatorDeps } from '../aggregate/tools.js';
+import type { ListChangedKind } from '../upstream/types.js';
 
 /** Bursts inside this window collapse into one notification. */
 export const DEBOUNCE_MS = 250;
@@ -32,6 +33,19 @@ export interface SubscriptionFanoutDeps {
   computeToolNames: () => Promise<string[]>;
   /** Publishes `notifications/tools/list_changed` on the gateway's own bus. */
   notifyToolsChanged: () => void;
+  /**
+   * Publishes `notifications/prompts/list_changed` and
+   * `notifications/resources/list_changed`.
+   *
+   * B-24(b): these were missing, so the gateway advertised prompts/resources
+   * `listChanged` while only ever publishing the tools notification. Either relay the
+   * event or stop claiming it; the SDK offers both.
+   *
+   * verified: node_modules/@modelcontextprotocol/server/dist/createMcpHandler-D4NN8WsG.d.mts
+   *   (ServerNotifier.promptsChanged / .resourcesChanged)
+   */
+  notifyPromptsChanged: () => void;
+  notifyResourcesChanged: () => void;
 }
 
 /** The notification types a subscription filter can ask for. */
@@ -56,30 +70,38 @@ export class SubscriptionFanout {
   readonly #controller = new AbortController();
   #timer: NodeJS.Timeout | undefined;
   #lastPublished: string[] | undefined;
-  /** Set when an UPSTREAM pushed a change event in the current debounce window. */
-  #upstreamEvent = false;
+  /** Which lists an UPSTREAM pushed in the current debounce window. */
+  #upstreamEvents = new Set<ListChangedKind>();
   /**
-   * Union of the honoured filters of the OPEN upstream subscriptions.
+   * The honoured filter of each OPEN upstream subscription, keyed by upstream name.
+   *
+   * B-24(a): this was a single flat union that was only ever added to, so a subscription
+   * that closed left its contribution behind forever and the gateway kept advertising
+   * `listChanged` it could no longer receive. Keeping one entry per upstream makes
+   * removal exact when the subscription ends.
    *
    * verified: docs/ref/spec-2026-07-28-basic-patterns-subscriptions.md ("The `notifications`
-   *   field in the acknowledgment reflects the subset the server agreed to honor"; "The client
-   *   SHOULD check the acknowledged filter against what it requested and handle any
-   *   unsupported types gracefully")
-   * verified: node_modules/@modelcontextprotocol/server/dist/mcp-DIH4cS6P.mjs (honoredSubset:
-   *   a requested flag is dropped unless the server advertises the matching listChanged /
-   *   subscribe capability)
+   *   field in the acknowledgment reflects the subset the server agreed to honor"; and
+   *   "Cancellation" — a subscription ends when the client cancels, the server tears it
+   *   down, or the transport closes)
    */
-  #honored: ListChangedTypes = {};
+  readonly #honoredByUpstream = new Map<string, ListChangedTypes>();
   #started = false;
 
   /**
    * What the gateway can ACTUALLY relay downstream right now: the union of the honoured
-   * filters over the open upstream subscriptions. D17 requires the gateway's own advertised
-   * `listChanged` bits to be derived from this, so a downstream acknowledgement never claims
-   * more than some upstream really honoured.
+   * filters over the still-OPEN upstream subscriptions. D17 requires the gateway's own
+   * advertised `listChanged` bits to be derived from this, so a downstream acknowledgement
+   * never claims more than some open upstream really honoured.
    */
   supportedTypes(): ListChangedTypes {
-    return { ...this.#honored };
+    const union: ListChangedTypes = {};
+    for (const honored of this.#honoredByUpstream.values()) {
+      for (const key of Object.keys(honored) as (keyof ListChangedTypes)[]) {
+        if (honored[key] === true) union[key] = true;
+      }
+    }
+    return union;
   }
 
   constructor(deps: SubscriptionFanoutDeps) {
@@ -107,11 +129,18 @@ export class SubscriptionFanout {
         // Register the notification handlers FIRST: `listen()` only opens the stream, and a
         // notification arriving before a handler exists would be dropped
         // (verified in spikes/out-probe-subscriptions.txt).
-        upstream.onListChanged?.(() => { this.markDirty(true); });
+        upstream.onListChanged?.((kind) => { this.markDirty(kind); });
         const subscription = await upstream.listen(this.#controller.signal);
         this.#recordHonored(upstream.name, subscription.honoredFilter);
         void subscription.closed.then((how: string) => {
-          if (how === 'local') return;
+          // B-24(a): the subscription is gone, so its honoured filter is no longer
+          // something the gateway can receive. Drop the contribution BEFORE recomputing,
+          // otherwise the advertisement outlives the subscription.
+          this.#forgetHonored(upstream.name);
+          if (how === 'local') {
+            this.markDirty();
+            return;
+          }
           this.#deps.logger.warn({ upstream: upstream.name, how }, 'upstream subscription closed');
           this.markDirty();
         });
@@ -144,21 +173,37 @@ export class SubscriptionFanout {
  * answer as a partial subscription rather than silently assuming full coverage.
  */
 #recordHonored(upstreamName: string, honored: ListChangedTypes): void {
-  const dropped = (Object.keys(REQUESTED_FILTER) as (keyof ListChangedTypes)[]).filter(
-    (key) => REQUESTED_FILTER[key] === true && honored[key] !== true,
-  );
+    const dropped = (Object.keys(REQUESTED_FILTER) as (keyof ListChangedTypes)[]).filter(
+      (key) => REQUESTED_FILTER[key] === true && honored[key] !== true,
+    );
 
-  if (dropped.length > 0) {
-    this.#deps.logger.warn(
-      { upstream: upstreamName, dropped, honored },
-      'upstream honoured a partial subscriptions/listen filter',
+    if (dropped.length > 0) {
+      this.#deps.logger.warn(
+        { upstream: upstreamName, dropped, honored },
+        'upstream honoured a partial subscriptions/listen filter',
+      );
+    }
+
+    // Replace, not merge: one open subscription per upstream, and re-listening must not
+    // accumulate bits the current subscription did not honour.
+    this.#honoredByUpstream.set(upstreamName, { ...honored });
+  }
+
+  /**
+   * Drops an upstream's contribution when its subscription ends.
+   *
+   * verified: docs/ref/spec-2026-07-28-basic-patterns-subscriptions.md ("Cancellation": a
+   *   subscription ends when the client cancels it, the server tears it down, or the
+   *   underlying transport closes — in every case the stream no longer carries events)
+   */
+  #forgetHonored(upstreamName: string): void {
+    if (!this.#honoredByUpstream.delete(upstreamName)) return;
+    const remaining = this.supportedTypes();
+    this.#deps.logger.info(
+      { upstream: upstreamName, supportedTypes: remaining },
+      'upstream subscription ended; list-changed advertisement recomputed',
     );
   }
-
-  for (const key of Object.keys(honored) as (keyof ListChangedTypes)[]) {
-    if (honored[key] === true) this.#honored[key] = true;
-  }
-}
 
   /**
    * Marks the merged list as potentially changed.
@@ -166,11 +211,13 @@ export class SubscriptionFanout {
    * `fromUpstream` distinguishes the two sources:
    *   - an UPSTREAM push event is always relayed (debounced), because the upstream may have
    *     changed a description, an input schema or anything else the gateway cannot see;
+   *     B-24(b) now relays the SAME kind that arrived instead of always publishing tools;
    *   - a STATUS transition only notifies when the merged name set really changed, so
-   *     repeated flapping between `ready` and `error` cannot spam clients.
+   *     repeated flapping between `ready` and `error` cannot spam clients. Only the tool
+   *     list is recomputed there, so only tools are notified.
    */
-  markDirty(fromUpstream = false): void {
-    if (fromUpstream) this.#upstreamEvent = true;
+  markDirty(fromUpstream?: ListChangedKind): void {
+    if (fromUpstream !== undefined) this.#upstreamEvents.add(fromUpstream);
     if (this.#timer !== undefined) return;
     this.#timer = setTimeout(() => {
       this.#timer = undefined;
@@ -179,10 +226,10 @@ export class SubscriptionFanout {
     this.#timer.unref?.();
   }
 
-  /** Recomputes and, when warranted, publishes `notifications/tools/list_changed`. */
+  /** Recomputes and, when warranted, publishes the matching list-changed notifications. */
   async flush(): Promise<boolean> {
-    const upstreamEvent = this.#upstreamEvent;
-    this.#upstreamEvent = false;
+    const upstreamEvents = this.#upstreamEvents;
+    this.#upstreamEvents = new Set<ListChangedKind>();
 
     let next: string[];
     try {
@@ -199,11 +246,14 @@ export class SubscriptionFanout {
     this.#lastPublished = next;
     const changed = previous === undefined || !sameSet(previous, next);
 
-    if (changed || upstreamEvent) {
-      this.#deps.notifyToolsChanged();
-      return true;
-    }
-    return false;
+    // D17(2): an upstream push is always relayed. D17(3): a status transition only when
+    // the merged name set really changed.
+    const tools = upstreamEvents.has('tools') || changed;
+    if (tools) this.#deps.notifyToolsChanged();
+    if (upstreamEvents.has('prompts')) this.#deps.notifyPromptsChanged();
+    if (upstreamEvents.has('resources')) this.#deps.notifyResourcesChanged();
+
+    return tools || upstreamEvents.has('prompts') || upstreamEvents.has('resources');
   }
 
   stop(): Promise<void> {

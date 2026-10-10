@@ -214,6 +214,11 @@ export function buildGatewayMcp(options: BuildMcpServerOptions): BuiltGateway {
     logger,
     computeToolNames: async () => (await aggregateToolsList(aggregator, AbortSignal.timeout(10_000))).tools.map((t) => t.name),
     notifyToolsChanged: () => handler.notify.toolsChanged(),
+    // verified: node_modules/@modelcontextprotocol/server/dist/createMcpHandler-D4NN8WsG.d.mts
+    //   (ServerNotifier.promptsChanged / .resourcesChanged publish to every open
+    //    subscription that opted in)
+    notifyPromptsChanged: () => handler.notify.promptsChanged(),
+    notifyResourcesChanged: () => handler.notify.resourcesChanged(),
   });
 
   return {

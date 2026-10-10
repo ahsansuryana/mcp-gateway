@@ -18,6 +18,12 @@ export interface FakeUpstream {
   kind: FakeKind;
   /** Publishes `notifications/tools/list_changed` on the fake's own bus (S3.4). */
   publishToolsChanged: () => void;
+  /**
+   * Publishes `notifications/prompts/list_changed` and
+   * `notifications/resources/list_changed` (B-24(b)).
+   */
+  publishPromptsChanged: () => void;
+  publishResourcesChanged: () => void;
   close: () => Promise<void>;
 }
 
@@ -59,7 +65,19 @@ export async function startFakeUpstream(options: FakeOptions): Promise<FakeUpstr
         //
         // verified: node_modules/@modelcontextprotocol/server/dist/mcp-DIH4cS6P.mjs
         //   (honoredSubset: a requested flag is dropped unless the server advertises it)
-        capabilities: { tools: { listChanged: options.withoutListChanged !== true } },
+        capabilities: {
+          tools: { listChanged: options.withoutListChanged !== true },
+          // B-24(b): the gateway relays these two, so the fake must be able to honour AND
+          // to emit them. `withResources` gates them, matching what the gateway itself
+          // advertises (resources/prompts capabilities are only declared when it has a
+          // ready upstream).
+          ...(options.withResources === true
+            ? {
+                prompts: { listChanged: true },
+                resources: { listChanged: true },
+              }
+            : {}),
+        },
         // Every cacheable operation advertises the same hint, so D11's minimum can be
         // exercised on resources/list and prompts/list as well as tools/list.
         cacheHints:
@@ -220,6 +238,10 @@ export async function startFakeUpstream(options: FakeOptions): Promise<FakeUpstr
     kind: options.kind,
     // verified: spikes/node_modules/@modelcontextprotocol/server/dist/createMcpHandler-D4NN8WsG.d.mts (McpHttpHandler.notify.toolsChanged)
     publishToolsChanged: () => handler.notify.toolsChanged(),
+    // verified: node_modules/@modelcontextprotocol/server/dist/createMcpHandler-D4NN8WsG.d.mts
+    //   (ServerNotifier.promptsChanged / .resourcesChanged)
+    publishPromptsChanged: () => handler.notify.promptsChanged(),
+    publishResourcesChanged: () => handler.notify.resourcesChanged(),
     close: () => new Promise<void>((resolve) => httpServer.close(() => resolve())),
   };
 }
