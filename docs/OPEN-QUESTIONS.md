@@ -293,3 +293,23 @@ code behind a `dev`/`start` script). Sprint 2 S2.5 created it and it wires the f
 `loadConfig` -> `createLogger` -> `UpstreamManager` -> `buildHttpApp` -> listen, with
 SIGINT/SIGTERM shutdown. The gateway is demonstrably serving (see
 `spikes/out-spike-4.txt` and the 20-test E2E suite).
+---
+
+## Q-PROCPS — tree-kill needs `ps` on Linux (found in Sprint 4)
+
+`tree-kill` builds a POSIX process tree with `ps --ppid`, which lives in the `procps`
+package. Minimal container images do not ship it: running the suite on
+`node:24-bookworm-slim` produced `spawn ps ENOENT`, raised from inside the dependency's
+own error handler where a `try/catch` cannot intercept it.
+
+The gateway now probes for `ps` once and degrades to a direct-child `SIGKILL`, logging
+`process tree kill degraded to direct child` at `warn` so the limitation is never
+silently claimed as a full tree kill.
+
+**Not a question for the gateway itself** — the behaviour is decided and documented in
+`docs/SECURITY.md`. What remains open is whether the project should document `procps` as
+a runtime dependency of the container image, and whether a `Dockerfile` will be shipped at
+all (currently the Linux test path is `node:24-bookworm-slim` driven by hand).
+
+**Decision needed (deployment, not Sprint 4):** add `procps` to any image used in
+production, or drop the tree-kill escalation and rely on the SDK's direct-child close.
