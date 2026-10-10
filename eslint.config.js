@@ -11,7 +11,11 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          // eslint.config.js is plain JS with a // @ts-check header, so it is not part of
+          // any tsconfig include; opt it in explicitly rather than via a tsconfig.
+          allowDefaultProject: ['eslint.config.js'],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
