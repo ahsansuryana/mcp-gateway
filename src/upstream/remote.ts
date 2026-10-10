@@ -1,7 +1,12 @@
 // PLAN.md S2.2: RemoteUpstream — an SDK v2 `Client` over Streamable HTTP with static
 // headers, a per-request timeout and an AbortSignal wired all the way through.
 
-import { Client, StreamableHTTPClientTransport, UnauthorizedError } from '@modelcontextprotocol/client';
+import {
+  Client,
+  StreamableHTTPClientTransport,
+  UnauthorizedError,
+  type McpSubscription,
+} from '@modelcontextprotocol/client';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/server';
 
 import { scrubSecrets } from '../observability/logger.js';
@@ -89,16 +94,90 @@ export class RemoteUpstream implements Upstream {
     return out;
   }
 
-  async callTool(name: string, args: unknown, meta: unknown, signal: AbortSignal): Promise<CallToolResult> {
+  async callTool(
+    name: string,
+    args: unknown,
+    meta: unknown,
+    signal: AbortSignal,
+    extra: { requestState?: unknown; inputResponses?: Record<string, unknown> } = {},
+    options: { onprogress?: (progress: unknown) => void | Promise<void> } = {},
+  ): Promise<CallToolResult> {
     const client = this.#requireClient();
-    // verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
-    //   (Client.callTool(params, options))
-    return client.callTool({ name, arguments: (args ?? {}) as Record<string, unknown>, _meta: asMeta(meta) }, {
+
+    // Q-MRTRPROXY: `inputResponses` and `requestState` are SIBLINGS of `arguments` in the
+    // request params, not `_meta` entries
+    // (verified: docs/ref/spec-2026-07-28-server-tools.md, "Retry with Input Responses"),
+    // and the server seam lifts them into `ctx.mcpReq` before the handler runs
+    // (verified: spikes/node_modules/@modelcontextprotocol/server/dist/createMcpHandler-D4NN8WsG.d.mts,
+    // ServerContext.mcpReq). A proxy must therefore re-attach them explicitly.
+    const params = {
+      name,
+      arguments: (args ?? {}) as Record<string, unknown>,
+      _meta: asMeta(meta),
+      ...(extra.inputResponses === undefined ? {} : { inputResponses: extra.inputResponses }),
+      ...(typeof extra.requestState === 'string' ? { requestState: extra.requestState } : {}),
+    };
+
+    const requestOptions = {
       signal,
       timeout: this.timeoutMs,
-      // Sprint 3 (S3.5) turns this on for the MRTR passthrough.
-      allowInputRequired: false,
-    });
+      // Sprint 3 S3.5: surface an `input_required` result unchanged instead of raising.
+      // verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
+      //   (RequestOptions.allowInputRequired)
+      allowInputRequired: true,
+      ...(options.onprogress === undefined ? {} : { onprogress: options.onprogress }),
+    };
+
+    // verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
+    //   (Client.callTool(params, options))
+    return client.callTool(params, requestOptions);
+  }
+
+  // -------------------------------------------------------------------------
+  // Resources and prompts (Sprint 3, PLAN.md §5)
+  // -------------------------------------------------------------------------
+
+  async listResources(signal: AbortSignal) {
+    const client = this.#requireClient();
+    // verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
+    //   (Client.listResources(params?, options?: CacheableRequestOptions))
+    return client.listResources({}, { cacheMode: 'bypass', signal, timeout: this.timeoutMs });
+  }
+
+  async readResource(uri: string, signal: AbortSignal) {
+    const client = this.#requireClient();
+    // verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
+    //   (Client.readResource(params, options))
+    return client.readResource({ uri }, { cacheMode: 'bypass', signal, timeout: this.timeoutMs });
+  }
+
+  async listPrompts(signal: AbortSignal) {
+    const client = this.#requireClient();
+    // verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
+    //   (Client.listPrompts(params?, options?: CacheableRequestOptions))
+    return client.listPrompts({}, { cacheMode: 'bypass', signal, timeout: this.timeoutMs });
+  }
+
+  async getPrompt(name: string, args: Record<string, string> | undefined, signal: AbortSignal) {
+    const client = this.#requireClient();
+    // verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
+    //   (Client.getPrompt(params, options?: RequestOptions))
+    return client.getPrompt({ name, arguments: args }, { signal, timeout: this.timeoutMs });
+  }
+
+  /**
+   * Opens the upstream `subscriptions/listen` stream (Sprint 3 S3.4). The returned handle
+   * is used to fan upstream list-changed events out to the gateway's own listeners.
+   *
+   * verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
+   *   (Client.listen(filter, options): Promise<McpSubscription>)
+   */
+  async listen(signal: AbortSignal): Promise<McpSubscription> {
+    const client = this.#requireClient();
+    return client.listen(
+      { toolsListChanged: true, promptsListChanged: true, resourcesListChanged: true },
+      { signal, timeout: this.timeoutMs },
+    );
   }
 
   // -------------------------------------------------------------------------

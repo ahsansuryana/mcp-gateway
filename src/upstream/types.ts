@@ -1,7 +1,15 @@
 // The internal Upstream contract (PLAN.md §5). Types are adapted to the SDK v2 real
 // types, verified in Sprint 0 — see docs/SDK-NOTES.md.
 
-import type { CacheScope, CallToolResult, Tool } from '@modelcontextprotocol/server';
+import type {
+  CallToolResult,
+  CacheScope,
+  GetPromptResult,
+  ListPromptsResult,
+  ListResourcesResult,
+  ReadResourceResult,
+  Tool,
+} from '@modelcontextprotocol/server';
 
 /** PLAN.md §5 status machine. */
 export type UpstreamStatus =
@@ -61,9 +69,50 @@ export interface Upstream {
   /**
    * D12: rejects when the failure is upstream-caused (down / timeout / needs auth), so
    * the caller can turn it into an `isError` tool result instead of a JSON-RPC error.
+   *
+   * `extra` carries the multi-round-trip fields. PLAN.md §5 does not mention them, but the
+   * SDK seam LIFTS `inputResponses` / `requestState` out of `params` before the handler
+   * runs, so a proxy MUST re-attach them or MRTR silently fails (S3.5, docs/adr pending —
+   // see docs/OPEN-QUESTIONS.md Q-MRTRPROXY). Verified in spikes/spike-1.mjs: without this
+   * the upstream is polled for 10 rounds and the call fails.
+   *
+   * `options.onprogress` re-emits the upstream's progress notifications downstream (S3.6).
    */
-  callTool(name: string, args: unknown, meta: unknown, signal: AbortSignal): Promise<CallToolResult>;
+  callTool(
+    name: string,
+    args: unknown,
+    meta: unknown,
+    signal: AbortSignal,
+    extra?: { requestState?: unknown; inputResponses?: Record<string, unknown> },
+    options?: { onprogress?: (progress: unknown) => void | Promise<void> },
+  ): Promise<CallToolResult>;
+
+  // --- added in Sprint 3 (PLAN.md §5) -------------------------------------
+
+  listResources(signal: AbortSignal): Promise<ListResourcesResult>;
+
+  readResource(uri: string, signal: AbortSignal): Promise<ReadResourceResult>;
+
+  listPrompts(signal: AbortSignal): Promise<ListPromptsResult>;
+
+  getPrompt(name: string, args: Record<string, string> | undefined, signal: AbortSignal): Promise<GetPromptResult>;
+
+  /**
+   * Opens the upstream `subscriptions/listen` stream (S3.4). Optional on the interface: an
+   * upstream that does not implement the modern era rejects it, which the fan-out treats as
+   * "this upstream cannot push changes" rather than as an error.
+   *
+   * verified: spikes/node_modules/@modelcontextprotocol/client/dist/index.d.mts
+   *   (Client.listen(filter, options): Promise<McpSubscription>)
+   */
+  listen?(signal: AbortSignal): Promise<{ close: () => Promise<void>; readonly closed: Promise<string> }>;
 }
+
+/**
+ * S3.1: resource templates are a NON-GOAL (PLAN.md §1), so the gateway never advertises
+ * them and never asks an upstream for them.
+ */
+export const RESOURCE_TEMPLATES_ARE_NOT_AGGREGATED = true;
 
 /** Narrowing helper so callers can skip the `undefined` branch of `noUncheckedIndexedAccess`. */
 export function isReady(upstream: Upstream): boolean {

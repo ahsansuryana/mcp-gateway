@@ -44,6 +44,7 @@ export class UpstreamManager {
   readonly #config: GatewayConfig;
   readonly #entries = new Map<string, Entry>();
   readonly #options: UpstreamManagerOptions;
+  readonly #statusListeners = new Set<(name: string, state: string) => void>();
 
   constructor(config: GatewayConfig, options: UpstreamManagerOptions = {}) {
     this.#config = config;
@@ -58,6 +59,32 @@ export class UpstreamManager {
 
   get names(): string[] {
     return [...this.#entries.keys()];
+  }
+
+  /** Every constructed upstream, in config order. */
+  all(): Upstream[] {
+    return [...this.#entries.values()].map((e) => e.upstream);
+  }
+
+  /**
+   * S3.4: observes status transitions so the gateway can emit `toolsListChanged` when an
+   * upstream coming up or going down changes the merged list. Returns an unsubscribe fn.
+   */
+  onStatusChange(listener: (name: string, state: string) => void): () => void {
+    this.#statusListeners.add(listener);
+    return () => {
+      this.#statusListeners.delete(listener);
+    };
+  }
+
+  #emitStatus(name: string, state: string): void {
+    for (const listener of this.#statusListeners) {
+      try {
+        listener(name, state);
+      } catch {
+        // A misbehaving listener must not break a status transition.
+      }
+    }
   }
 
   get(name: string): Upstream | undefined {
@@ -135,6 +162,7 @@ export class UpstreamManager {
     this.#clearRetry(entry);
     await entry.upstream.start().catch(() => undefined);
     const state = entry.upstream.status().state;
+    this.#emitStatus(entry.upstream.name, state);
     if (state === 'ready') {
       entry.failures = 0;
       return;

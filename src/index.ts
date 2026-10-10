@@ -49,7 +49,7 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
     defaultTtlMs: config.gateway.defaultTtlMs,
   };
 
-  const { app } = buildHttpApp({ config, aggregator, logger });
+  const { app, startFanout, stopFanout } = buildHttpApp({ config, aggregator, logger });
 
   const server = await new Promise<Server>((resolve, reject) => {
     const s = app.listen(config.gateway.port, config.gateway.host, () => resolve(s));
@@ -61,6 +61,10 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
 
   // D8: a failure here never blocks startup; broken upstreams surface in /status.
   await manager.start();
+  // S3.4: subscribe upstream and fan change events out. Never fatal.
+  await startFanout().catch((err: unknown) => {
+    logger.warn({ reason: err instanceof Error ? err.message : String(err) }, 'subscriptions fan-out did not start');
+  });
   logger.info({ port, upstreams: manager.reports() }, 'gateway listening');
 
   return {
@@ -68,6 +72,7 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
     manager,
     port,
     stop: async () => {
+      await stopFanout().catch(() => undefined);
       await manager.stop();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       logger.info('gateway stopped');

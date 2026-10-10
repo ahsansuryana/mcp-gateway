@@ -89,6 +89,15 @@ export function computeTtlMs(
   return Math.min(...values);
 }
 
+/**
+ * PLAN.md S3.6: a handler for progress must both receive the upstream's progress and emit
+ * it downstream on the SAME request's response stream.
+ */
+export interface CallToolHooks {
+  /** Re-emits a progress notification the upstream sent (S3.6). */
+  onUpstreamProgress?: (progress: unknown) => void | Promise<void>;
+}
+
 export interface CallToolOutcome {
   result: CallToolResult;
 }
@@ -109,6 +118,8 @@ export async function aggregateCallTool(
   args: unknown,
   meta: unknown,
   signal: AbortSignal,
+  extra: { requestState?: unknown; inputResponses?: Record<string, unknown> } = {},
+  hooks: CallToolHooks = {},
 ): Promise<CallToolResult> {
   const parsed = parseNamespacedName(namespacedName);
   if (parsed === null) {
@@ -126,7 +137,14 @@ export async function aggregateCallTool(
   }
 
   try {
-    return await upstream.callTool(parsed.name, args, forwardMeta(meta), signal);
+    return await upstream.callTool(
+      parsed.name,
+      args,
+      meta,
+      signal,
+      extra,
+      hooks.onUpstreamProgress === undefined ? undefined : { onprogress: hooks.onUpstreamProgress },
+    );
   } catch (err) {
     deps.logger.warn(
       { upstream: parsed.server, tool: parsed.name, reason: err instanceof Error ? err.message : String(err) },

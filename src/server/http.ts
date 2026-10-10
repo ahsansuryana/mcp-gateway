@@ -7,7 +7,7 @@ import { originValidation } from '@modelcontextprotocol/express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 
 import { createBearerAuth } from './auth.js';
-import { createGatewayHandler } from './mcp.js';
+import { buildGatewayMcp } from './mcp.js';
 import { aggregateCallTool, type ToolsAggregatorDeps } from '../aggregate/tools.js';
 import type { Logger } from '../observability/logger.js';
 import type { GatewayConfig } from '../config/schema.js';
@@ -29,6 +29,9 @@ export interface HttpApp {
   app: Express;
   /** Hostnames the Origin header is validated against. */
   allowedOrigins: readonly string[];
+  /** S3.4: the `subscriptions/listen` fan-out bound to this handler. */
+  startFanout: () => Promise<void>;
+  stopFanout: () => Promise<void>;
 }
 
 /**
@@ -91,13 +94,13 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
     });
   });
 
-  const mcpHandler = createGatewayHandler({
+  const built = buildGatewayMcp({
     config,
     aggregator,
     logger,
     maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
   });
-  const nodeHandler = toNodeHandler(mcpHandler, { maxRequestBodySize: MAX_REQUEST_BODY_BYTES });
+  const nodeHandler = toNodeHandler(built.handler, { maxRequestBodySize: MAX_REQUEST_BODY_BYTES });
 
   app.post(
     '/mcp',
@@ -115,7 +118,12 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
   );
 
   logger.debug({ allowedOrigins }, 'http app configured');
-  return { app, allowedOrigins };
+  return {
+    app,
+    allowedOrigins,
+    startFanout: built.startFanout,
+    stopFanout: built.stopFanout,
+  };
 }
 
 export { aggregateCallTool };
