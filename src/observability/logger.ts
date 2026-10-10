@@ -122,13 +122,25 @@ export function createLogger(options: LoggerOptionsExtra = {}): Logger {
  * Builds the secret list from a loaded config. Only LITERAL values are registered:
  * `{env:NAME}` was already substituted, so what lands here is the real secret.
  */
+/**
+ * Builds the secret list from a loaded config. Only LITERAL values are registered:
+ * `{env:NAME}` was already substituted, so what lands here is the real secret.
+ *
+ * Typed loosely on purpose: a `local` upstream has no `headers` at all, so the precise
+ * union would make the parameter unusable. The read is therefore guarded.
+ */
 export function secretsFromConfig(config: {
   gateway?: { auth?: { keys?: readonly string[] } };
-  mcp?: Record<string, { headers?: Readonly<Record<string, string>> }>;
+  mcp?: Readonly<Record<string, unknown>>;
 }): string[] {
   const values: string[] = [...(config.gateway?.auth?.keys ?? [])];
   for (const entry of Object.values(config.mcp ?? {})) {
-    for (const value of Object.values(entry.headers ?? {})) values.push(value);
+    if (entry === null || typeof entry !== 'object') continue;
+    const headers = (entry as { headers?: unknown }).headers;
+    if (headers === null || typeof headers !== 'object') continue;
+    for (const value of Object.values(headers as Record<string, unknown>)) {
+      if (typeof value === 'string') values.push(value);
+    }
   }
   return values;
 }

@@ -75,14 +75,23 @@ export interface NamespacingReport {
   skipped: { server: string; tool: string; reason: SkipReason }[];
 }
 
+/** One entry that survived D4, with its original and namespaced names. */
+export interface NamespacedEntry {
+  server: string;
+  /** The tool's ORIGINAL (upstream) name. */
+  name: string;
+  namespaced: string;
+}
+
 /**
  * Applies D4 across a batch, returning the skipped entries so the caller can log a
  * warning naming the server and the tool (D4) without dropping them silently.
  */
-export function namespaceBatch(
-  entries: readonly { server: string; name: string }[],
-): { tools: { server: string; name: string; namespaced: string }[]; report: NamespacingReport } {
-  const tools: { server: string; name: string; namespaced: string }[] = [];
+export function namespaceBatch(entries: readonly { server: string; name: string }[]): {
+  tools: NamespacedEntry[];
+  report: NamespacingReport;
+} {
+  const tools: NamespacedEntry[] = [];
   const skipped: NamespacingReport['skipped'] = [];
 
   for (const { server, name } of entries) {
@@ -90,7 +99,7 @@ export function namespaceBatch(
     if (outcome.namespaced !== undefined) {
       tools.push({ server, name, namespaced: outcome.namespaced });
     } else {
-      skipped.push({ server, name, reason: outcome.reason ?? 'too-long' });
+      skipped.push({ server, tool: name, reason: outcome.reason ?? 'too-long' });
     }
   }
 
