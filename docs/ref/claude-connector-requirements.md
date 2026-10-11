@@ -193,6 +193,82 @@ Recorded in `docs/OPEN-QUESTIONS.md` as **Q-CLAUDE-GAPS** rather than guessed:
 4. **`oauth_anthropic_creds` and `custom_connection`** are described but require contacting
    Anthropic; no self-service path is documented.
 
+## 4b. Behaviour BEFORE authentication (added in Sprint 7, P7-2)
+
+Source: https://claude.com/docs/connectors/building/lazy-authentication (read end to end).
+
+This page documents **lazy authentication** ("mixed auth"): a connector where Claude can
+connect, list tools and call public tools with no sign-in, and is asked to sign in only when
+it reaches a protected tool.
+
+### What Claude requires for lazy auth
+
+| Requirement | Consequence for this gateway |
+|---|---|
+| "A tool handler can't produce that response: once the MCP SDK is running a tool, whatever the handler returns is wrapped in a `200`. The check has to run in your HTTP handler, on the parsed JSON-RPC body, before the request reaches the SDK." | A protected-tool gate must live in the Express layer, BEFORE `toNodeHandler`. |
+| "`initialize`, `tools/list`, and calls to public tools never hit the gate, so the connector is fully usable before sign-in." | `server/discover` and `tools/list` must be answerable **without a credential**. |
+| "Only a transport-level `401` causes Claude to pause the call, run the OAuth flow, and retry." | A `200` wrapping `isError: true` does NOT trigger sign-in. |
+| "`403` triggers re-authentication only when accompanied by `WWW-Authenticate: Bearer error=\"insufficient_scope\"` … any other `403` is surfaced as a terminal error." | Scope step-up needs that exact header (see B-31). |
+
+### **This conflicts with what the gateway implements today**
+
+The gateway currently rejects **every** unauthenticated `POST /mcp` with `401` — including
+`tools/list` and `server/discover`. That is Claude's **"Sign in now"** mode, which Claude
+fully supports (https://claude.com/docs/connectors/custom/add-unlisted, "Authentication:
+Sign in now").
+
+Lazy authentication is a **different, optional** mode. Supporting it would require per-tool
+auth policy, which the gateway has no configuration for and which no task in PLAN.md asks
+for.
+
+**Decision taken: not implemented, and documented here rather than silently assumed.** If
+per-user visibility of tool names matters (so a user can browse the catalog before
+consenting), that is a future feature with a real design question attached — not a bug fix.
+Recorded in `docs/BACKLOG.md` as B-35.
+
+### What this page CONFIRMS about decisions already made
+
+1. **Token verification.** "check the JWT signature, that `iss` matches your authorization
+   server, that `aud` equals the `resource` value you advertise in your protected resource
+   metadata, and `exp`, or use RFC 7662 token introspection". That is exactly what S6.1
+   implements. No change needed.
+2. **The `WWW-Authenticate` parameters.** The documented value is
+   `Bearer error="invalid_token", error_description="…", resource_metadata="…", scope="…"`
+   — the same four parameters the gateway emits. No change needed.
+3. **CIMD's two-flag rule**, restated: `client_id_metadata_document_supported: true` **and**
+   `"none"` in `token_endpoint_auth_methods_supported`. No change needed.
+4. **Loopback matching** port-agnostically for both `127.0.0.1` and `localhost`. Matches §2.
+
+### One difference found, NOT silently changed
+
+The documented `401` body is:
+
+```json
+{"error":"invalid_token","error_description":"Authentication required for this tool"}
+```
+
+The gateway sends `{"error":"unauthorized"}`. The page states **"the body is advisory"** —
+the signal is the status and the header, both of which match. Left unchanged and recorded
+here rather than altered, per the instruction not to change code silently.
+
+### Cache implication for P7-3 (JWKS discovery)
+
+> "Claude caches your protected resource metadata and the authorization-server metadata it
+> points to globally, keyed by URL, with a staleness window of about five minutes by default."
+> "Stale on failure: if a refresh fails, Claude serves the stale entry and tries again on a
+> later request."
+
+Relevant to the gateway's own caches: a JWKS TTL much shorter than five minutes buys
+nothing for Claude-driven discovery, and a cache that fails CLOSED on a refresh outage would
+be worse than one that serves stale. The gateway's token verification already fails closed on
+verification error; that is a different concern from metadata caching and is unaffected.
+
+### Still not stated anywhere
+
+Q-CLAUDE-GAPS item 1 (**`iss`**) is **not** answered by this page. It describes token
+validation from the server's side only. Whether Claude's authorization server emits `iss`
+remains unknown.
+
 ## 5. Criteria to check when choosing an authorization server
 
 Deliberately **not** a product recommendation. Check each against the chosen AS's live

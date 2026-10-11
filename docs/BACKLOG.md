@@ -90,3 +90,10 @@ owns. PLAN.md §3 rule 8: anything out of scope goes here instead of into code.
 |---|---|---|---|
 | S5-MANUAL | **Sprint 5 manual test against a real OAuth server — DEFERRED by human decision until Q4 is deployed.** The full checklist is already written: `docs/reports/sprint-5-manual-test.md` (target Notion's `https://mcp.notion.com/mcp`, with the live metadata captured). Not a Sprint 6 blocker. | human decision at the Sprint 6 gate | run once the gateway is deployed behind `publicUrl` |
 | S5-LINUX | **CLOSED 2026-10-10.** The cause was a VPN on the human's side; with it off the remote Docker host answered again. Linux run on `node:24-bookworm-slim` (v24.21.0, aarch64, Armbian 25.5.1): typecheck 0, lint 0, **246 tests passed / 20 files**, `npm audit` 0 vulnerabilities. 246 vs Windows' 245+1-skipped because the POSIX-only `chmod 0600` token-store assertion — the one thing that had never run on the platform exercising it — ran and passed. Evidence in `docs/reports/sprint-7.md`. | Sprint 7 P7-1 | **CLOSED** |
+
+## From Sprint 7
+
+| ID | Item | Origin | Suggested home |
+|---|---|---|---|
+| B-35 | **Lazy (mixed) authentication is not implemented.** Claude supports a connector mode where `initialize`, `tools/list` and public tool calls succeed with NO credential, and sign-in is requested only when a protected tool is reached. The gateway rejects every unauthenticated `POST /mcp` with 401, which is Claude's "Sign in now" mode — supported and correct, but different. Supporting lazy auth needs per-tool auth policy: which tools are public, where that lives in config, and what a not-signed-in user sees in `tools/list`. None of that exists in PLAN.md. | S7 P7-2, `docs/ref/claude-connector-requirements.md` § 4b | future sprint, needs a design decision first |
+| B-36 | **Scope step-up (403 insufficient_scope) still not implemented.** Anthropic documents that a `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` triggers Claude to re-authorize with the UNION of the challenge scopes and the discovery scopes. The gateway has no insufficient-scope path at all. Depends on B-31. | S7 P7-2 | S6/S7 follow-up |
