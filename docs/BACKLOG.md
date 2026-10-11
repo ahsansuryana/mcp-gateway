@@ -97,3 +97,9 @@ owns. PLAN.md §3 rule 8: anything out of scope goes here instead of into code.
 |---|---|---|---|
 | B-35 | **Lazy (mixed) authentication is not implemented.** Claude supports a connector mode where `initialize`, `tools/list` and public tool calls succeed with NO credential, and sign-in is requested only when a protected tool is reached. The gateway rejects every unauthenticated `POST /mcp` with 401, which is Claude's "Sign in now" mode — supported and correct, but different. Supporting lazy auth needs per-tool auth policy: which tools are public, where that lives in config, and what a not-signed-in user sees in `tools/list`. None of that exists in PLAN.md. | S7 P7-2, `docs/ref/claude-connector-requirements.md` § 4b | future sprint, needs a design decision first |
 | B-36 | **Scope step-up (403 insufficient_scope) still not implemented.** Anthropic documents that a `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` triggers Claude to re-authorize with the UNION of the challenge scopes and the discovery scopes. The gateway has no insufficient-scope path at all. Depends on B-31. | S7 P7-2 | S6/S7 follow-up |
+
+## From Sprint 7 (S7)
+
+| ID | Item | Origin | Suggested home |
+|---|---|---|---|
+| B-37 | **Rate-limit buckets do not distinguish OAuth subjects.** The bucket key is the literal `'static-bearer'` for the static path. An OAuth caller is verified per request but every OAuth caller shares one bucket, so one noisy tenant can exhaust the allowance for all of them. Fixing it needs the verified `sub` (or a fallback for a token with no `sub`) threaded from `ResourceServer.verify` into the HTTP layer. | S7.2 | S7 follow-up / S8 |
