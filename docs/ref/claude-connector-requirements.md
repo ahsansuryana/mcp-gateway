@@ -226,6 +226,37 @@ per-user visibility of tool names matters (so a user can browse the catalog befo
 consenting), that is a future feature with a real design question attached — not a bug fix.
 Recorded in `docs/BACKLOG.md` as B-35.
 
+### Is lazy authentication REQUIRED to add a connector? (answered F-5)
+
+**No. It is not required, and the gateway does not need it.**
+
+Reading both pages in full, lazy authentication is described as an option conditioned on the
+server having a *mix* of tools, not as an entry requirement. The lazy-authentication page opens
+by scoping itself: *"This page is for developers whose MCP server has some tools that work
+without the user's identity"* (https://claude.com/docs/connectors/building/lazy-authentication).
+The authentication page repeats the same conditional framing — *"**If** some of your tools work
+without the user's account, see Lazy authentication"* — and lists lazy auth as an alternative in
+the `none` row of the supported-authentication-types table rather than as a requirement
+(https://claude.com/docs/connectors/building/authentication). Crucially, that page states the
+baseline explicitly: the lazy-auth page itself defers to it as *"the OAuth requirements **every
+server must meet regardless of when it asks for sign-in**"*.
+
+What every server must meet is therefore independent of lazy auth: answer unauthenticated
+requests with a real `401` carrying `WWW-Authenticate` (including `resource_metadata`), publish
+RFC 9728 protected-resource metadata, and support PKCE S256 plus CIMD-or-DCR at the
+authorization server. The gateway implements all of that (Sprint 6, ADR 0005).
+
+This gateway requires a credential for **every** `POST /mcp` — a static bearer key or a valid
+OAuth token — which is the ordinary all-tools-need-an-identity case. There is no public subset
+of tools to expose before sign-in, so the precondition that makes lazy auth meaningful does not
+apply. That is the supported "Sign in now" configuration, not a gap.
+
+**Consequence: B-35 can be closed as an accepted limitation rather than an open defect.** It
+stays a *feature* someone may want later — per-tool auth policy, so a user could browse a
+catalog before consenting — but it is not a blocker for adding a connector, and no work is
+owed against it. B-36 (scope step-up, the `403 insufficient_scope` path) remains a separate,
+genuinely optional feature and is also accepted as a documented limitation.
+
 ### What this page CONFIRMS about decisions already made
 
 1. **Token verification.** "check the JWT signature, that `iss` matches your authorization
