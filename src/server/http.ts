@@ -6,6 +6,8 @@ import express, { type Express, type Request, type Response } from 'express';
 import { originValidation } from '@modelcontextprotocol/express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 
+import { createHash } from 'node:crypto';
+
 import { createBearerAuth } from './auth.js';
 import { OAuthService } from '../auth/oauth-client/service.js';
 import { ResourceServer } from '../auth/oauth-resource/resource-server.js';
@@ -86,6 +88,15 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
   });
 
   /** Applies the bucket once the caller is identified. */
+  /**
+   * One bucket per CONFIGURED static key, derived from the key's SHA-256 digest.
+   *
+   * B-37. The key itself is never the bucket identity: the digest is one-way, and the
+   * limiter hashes the whole subject again before it becomes a map key, so neither the key
+   * nor anything reversible from it is ever retained.
+   */
+  const staticBucketIds = config.gateway.auth.keys.map((key) => `static:${sha256(key)}`);
+
   const enforceRateLimit = (res: Response, subject: string): boolean => {
     if (!rateLimiter.enabled) return true;
     const decision = rateLimiter.check(subject);
@@ -232,7 +243,7 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
-    if (!enforceRateLimit(res, `status:${API_KEY_ID}`)) return;
+    if (!enforceRateLimit(res, `${staticBucketIds[outcome.keyIndex] ?? API_KEY_ID}:status`)) return;
     res.status(200).json({
       gateway: {
         host: config.gateway.host,
@@ -281,6 +292,16 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
           .verify(bearerOf(req.headers.authorization))
   .then((result) => {
             if (result.ok) {
+              // B-37. Keyed on the issuer and subject the token PROVED, after full
+              // signature/issuer/audience/expiry validation. Nothing from an unverified or
+              // rejected token can reach this line, so it cannot create or consume a
+              // bucket. A verified token carrying no `sub` falls back to a per-issuer
+              // bucket: its subject is unknown, and keying on the raw token instead would
+              // let a real AS mint unbounded buckets.
+              const bucket = `oauth:${result.issuer ?? oauthConfig?.issuer ?? 'unknown'}${
+                result.subject === undefined ? '' : `\u0000${result.subject}`
+              }`;
+              if (!enforceRateLimit(res, bucket)) return;
               nodeHandler(req, res, req.body as unknown).catch(next);
               return;
             }
@@ -305,7 +326,7 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
         res.status(401).json({ error: 'unauthorized' });
         return;
       }
-      if (!enforceRateLimit(res, `mcp:${API_KEY_ID}`)) return;
+      if (!enforceRateLimit(res, `${staticBucketIds[outcome.keyIndex] ?? API_KEY_ID}:mcp`)) return;
       nodeHandler(req, res, req.body as unknown).catch(next);
     },
   );
@@ -326,14 +347,23 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
  *   MUST NOT be included in the URI query string, so the header is the only place to look.
  */
 /**
- * Identity for rate-limit bucketing.
+ * Fallback bucket identity, used only if `keyIndex` is somehow out of range.
  *
- * The static-key path has one shared identity, which is correct: those callers are
- * anonymous as far as the gateway is concerned, and distinguishing them by IP would make
- * a proxy collapse everyone into one bucket. The OAuth path is not yet wired into the
- * bucket key; a subject-aware key is the obvious next step and is recorded in BACKLOG.
+ * B-37 replaced the single shared 'static-bearer' identity: every OAuth caller used to land
+ * in one bucket, so one noisy tenant exhausted the allowance for all of them. Each static
+ * key now gets its own bucket, and OAuth callers are keyed by verified issuer + subject.
+ * IP is never used: a gateway behind a proxy sees one IP for every caller.
  */
 const API_KEY_ID = 'static-bearer';
+
+/**
+ * One-way digest of a configured static key, used as its rate-limit bucket identity.
+ *
+ * verified: nodejs.org/api/crypto.html#cryptocreatehashalgorithm-options
+ */
+function sha256(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('base64url');
+}
 
 function bearerOf(header: string | undefined): string | undefined {
   if (header === undefined) return undefined;

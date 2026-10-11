@@ -51,6 +51,16 @@ export type TokenRejection =
 
 export interface TokenResult {
   ok: boolean;
+  /**
+   * Present only when `ok` is true: the issuer AS READ FROM THE TOKEN.
+   *
+   * `jwtVerify` is given `issuer: this.#options.issuer`, so reaching this line means the
+   * token's `iss` has already been compared against the configured value and matched. The
+   * value is therefore verified, not merely parsed. It is returned rather than
+   * reconstructed from the configuration so that a caller building a rate-limit bucket key
+   * cannot accidentally key on anything other than what the token actually proved.
+   */
+  issuer?: string;
   /** Present only when `ok` is true. Never logged in full. */
   subject?: string;
   /** Present only when `ok` is false. Names the reason; never the token. */
@@ -173,7 +183,13 @@ export class ResourceServer {
         // symmetric key would be a shared secret, which ADR 0005 forbids on this path.
         algorithms: ['RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512', 'ES256', 'ES384', 'ES512'],
       });
-      return payload.sub === undefined ? { ok: true } : { ok: true, subject: payload.sub };
+      // `iss` is guaranteed present here: a token without it fails the `issuer` option
+      // above and never reaches this line.
+      return {
+        ok: true,
+        issuer: payload.iss as string,
+        ...(payload.sub === undefined ? {} : { subject: payload.sub }),
+      };
     } catch (err) {
       return { ok: false, reason: classify(err) };
     }
@@ -331,7 +347,9 @@ export function clearJwksDiscoveryCache(): void {
 
 /** Never log a token. This exists so that temptation has one obvious place to be removed. */
 export function describeTokenResult(result: TokenResult): Record<string, unknown> {
-  return result.ok ? { ok: true, subject: result.subject } : { ok: false, reason: result.reason };
+  return result.ok
+    ? { ok: true, issuer: result.issuer, subject: result.subject }
+    : { ok: false, reason: result.reason };
 }
 
 export type { JWTPayload };
