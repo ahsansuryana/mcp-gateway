@@ -160,6 +160,11 @@ describe('S5.4 the request path does not retry auth_required', () => {
   it('repeated requests against an auth_required upstream do not re-dial it', async () => {
     expect(gateway.manager.get('protected')?.status().state).toBe('auth_required');
 
+    // The SAME INSTANCE must still be in the manager afterwards. Counting status changes
+    // alone would not prove the upstream was not re-dialed: a manager that replaced the
+    // upstream and then stayed quiet would pass a transition count of 0.
+    const before = gateway.manager.get('protected');
+
     let transitions = 0;
     const off = gateway.manager.onStatusChange(() => {
       transitions += 1;
@@ -167,9 +172,19 @@ describe('S5.4 the request path does not retry auth_required', () => {
     for (let i = 0; i < 5; i += 1) {
       await client.listTools({}, { cacheMode: 'bypass' });
     }
+
+    // FLUSH BEFORE UNSUBSCRIBING. #emitStatus calls its listeners synchronously today, so
+    // the count above is complete -- but if a defect ever DEFERRED the emission past the
+    // request, `off()` would remove the listener first, the deferred event would go
+    // nowhere, and this test would pass while the retry storm it guards against was real.
+    // Draining the microtask queue and one macrotask turn first means the listener is still
+    // attached when any deferred emission arrives.
+    await new Promise((resolve) => setImmediate(resolve));
     off();
+
     // The manager must not re-emit a status change on every request: that was the retry
     // storm #ensureStarted's auth_required guard prevents.
     expect(transitions).toBe(0);
+    expect(gateway.manager.get('protected')).toBe(before);
   });
 });

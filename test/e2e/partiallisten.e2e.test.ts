@@ -186,7 +186,7 @@ describe('B-24 partial subscriptions/listen acknowledgement', () => {
     const sub = await client.listen({ toolsListChanged: true }, { timeout: 5_000 });
     try {
       full.publishToolsChanged();
-      await waitFor(() => received.length > 0, 8_000);
+      await waitFor(() => received.length > 0, DELIVERY_WINDOW_MS);
       expect(received.length).toBeGreaterThan(0);
     } finally {
       await sub.close();
@@ -196,6 +196,16 @@ describe('B-24 partial subscriptions/listen acknowledgement', () => {
   it('a push from the partially-honouring upstream is NOT delivered downstream', async () => {
     // It cannot be: the server never agreed to send it. Asserting the negative proves the
     // gateway does not manufacture events its upstreams did not promise.
+    //
+    // WHY 8 SECONDS AND NOT THE 1_500 THIS USED TO WAIT. A negative assertion is only as
+    // trustworthy as the window it waited. The sibling positive test above allows delivery
+    // to take up to 8_000 ms, so a window of 1_500 ms could be satisfied simply because the
+    // relay was slow -- the test would pass while the very defect it guards against was
+    // present. The two tests would then contradict each other: one says "delivered within
+    // 8 s", the other says "never delivered", and only one could be true.
+    //
+    // Asserting silence over the SAME budget the positive path is allowed makes the claim
+    // coherent: if a delivery could ever land, this window is long enough to see it.
     const received: string[] = [];
     client.setNotificationHandler('notifications/tools/list_changed', () => {
       received.push('changed');
@@ -203,13 +213,22 @@ describe('B-24 partial subscriptions/listen acknowledgement', () => {
     const sub = await client.listen({ toolsListChanged: true }, { timeout: 5_000 });
     try {
       partial.publishToolsChanged();
-      await new Promise((r) => setTimeout(r, 1_500));
+      await new Promise((r) => setTimeout(r, DELIVERY_WINDOW_MS));
       expect(received).toEqual([]);
     } finally {
       await sub.close();
     }
   }, 30_000);
 });
+
+/**
+ * The budget a relay is allowed to take.
+ *
+ * Used as the positive path's deadline AND as the negative path's silence window, so a
+ * "nothing was delivered" claim is never made over a shorter period than a delivery is
+ * permitted to take.
+ */
+const DELIVERY_WINDOW_MS = 8_000;
 
 async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
