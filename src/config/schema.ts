@@ -133,6 +133,16 @@ const gateway = z.strictObject({
     type: z.literal('bearer').default('bearer'),
     keys: z.array(z.string().min(1, 'must not be empty')),
   }),
+  /**
+   * S7.2: inbound rate limiting per authenticated subject. 0 (the default) disables it, so
+   * an existing config is unaffected.
+   */
+  rateLimit: z
+    .strictObject({
+      requests: z.int('must be an integer').min(0).default(0),
+      windowMs: z.int('must be an integer').min(1).default(60_000),
+    })
+    .optional(),
   defaultTimeoutMs: timeoutMs.default(30_000),
   defaultTtlMs: z
     .int('must be an integer number of milliseconds')

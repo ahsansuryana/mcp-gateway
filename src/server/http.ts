@@ -9,6 +9,7 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createBearerAuth } from './auth.js';
 import { OAuthService } from '../auth/oauth-client/service.js';
 import { ResourceServer } from '../auth/oauth-resource/resource-server.js';
+import { RateLimiter } from './rate-limit.js';
 import { buildGatewayMcp } from './mcp.js';
 import { aggregateCallTool, type ToolsAggregatorDeps } from '../aggregate/tools.js';
 import type { Logger } from '../observability/logger.js';
@@ -75,6 +76,25 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
   });
 
   const auth = createBearerAuth(config.gateway.auth.keys);
+
+  // PLAN.md S7.2. Keyed by the authenticated identity, never by IP: behind a proxy every
+  // caller shares one, and D9 forbids revealing anything about the presented key.
+  const rateLimitConfig = config.gateway.rateLimit;
+  const rateLimiter = new RateLimiter({
+    limit: rateLimitConfig?.requests ?? 0,
+    windowMs: rateLimitConfig?.windowMs ?? 60_000,
+  });
+
+  /** Applies the bucket once the caller is identified. */
+  const enforceRateLimit = (res: Response, subject: string): boolean => {
+    if (!rateLimiter.enabled) return true;
+    const decision = rateLimiter.check(subject);
+    if (decision.allowed) return true;
+    res.setHeader('Retry-After', String(decision.retryAfterSeconds ?? 1));
+    res.setHeader('X-RateLimit-Remaining', '0');
+    res.status(429).json({ error: 'rate limited' });
+    return false;
+  };
 
   // --- PLAN.md S6.1: protected resource -------------------------------------------
   // Requires publicUrl: the metadata document and the audience are both derived from it,
@@ -212,6 +232,7 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
+    if (!enforceRateLimit(res, `status:${API_KEY_ID}`)) return;
     res.status(200).json({
       gateway: {
         host: config.gateway.host,
@@ -284,6 +305,7 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
         res.status(401).json({ error: 'unauthorized' });
         return;
       }
+      if (!enforceRateLimit(res, `mcp:${API_KEY_ID}`)) return;
       nodeHandler(req, res, req.body as unknown).catch(next);
     },
   );
@@ -303,6 +325,16 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
  * verified: docs/ref/spec-2026-07-28-basic-authorization-index.md line 273 — access tokens
  *   MUST NOT be included in the URI query string, so the header is the only place to look.
  */
+/**
+ * Identity for rate-limit bucketing.
+ *
+ * The static-key path has one shared identity, which is correct: those callers are
+ * anonymous as far as the gateway is concerned, and distinguishing them by IP would make
+ * a proxy collapse everyone into one bucket. The OAuth path is not yet wired into the
+ * bucket key; a subject-aware key is the obvious next step and is recorded in BACKLOG.
+ */
+const API_KEY_ID = 'static-bearer';
+
 function bearerOf(header: string | undefined): string | undefined {
   if (header === undefined) return undefined;
   const match = /^Bearer[ ]+(.+)$/i.exec(header.trim());
