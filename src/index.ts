@@ -15,6 +15,7 @@ import type { GatewayConfig } from './config/schema.js';
 import { OAuthService } from './auth/oauth-client/service.js';
 import { TokenStore, loadTokenKey } from './auth/oauth-client/token-store.js';
 import { dirname, join, resolve } from 'node:path';
+import { ConfigReloader } from './server/reload.js';
 
 export interface RunningGateway {
   server: Server;
@@ -22,6 +23,8 @@ export interface RunningGateway {
   port: number;
   /** Exposed so the process-level signal handler can log its decisions. */
   logger: Logger;
+  /** S7.1: the config watcher; `stop()` detaches its SIGHUP listener. */
+  reloader: ConfigReloader;
   stop: () => Promise<void>;
 }
 
@@ -101,12 +104,29 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
   });
   logger.info({ port, upstreams: manager.reports() }, 'gateway listening');
 
+  // S7.1: watch the config file and honour SIGHUP. An invalid new file keeps the running
+  // configuration; the reload is applied through the manager so unchanged upstreams, and
+  // therefore their OAuth credentials, are left alone.
+  const reloader = new ConfigReloader(
+    {
+      path,
+      logger,
+      apply: async (next) => {
+        await manager.reconfigure(next);
+      },
+    },
+    config,
+  );
+  reloader.start();
+
   return {
     server,
     manager,
     port,
     logger,
+    reloader,
     stop: async () => {
+      reloader.stop();
       await stopFanout().catch(() => undefined);
       // A graceful stop gets SHUTDOWN_GRACE_MS in total. If it overruns, any child process
       // tree still alive is killed outright rather than being orphaned.

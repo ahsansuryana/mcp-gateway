@@ -6,6 +6,7 @@
 
 import type { GatewayConfig, UpstreamConfig } from '../config/schema.js';
 import { RemoteUpstream, type RemoteUpstreamOptions } from './remote.js';
+import { configDigest as digest } from '../server/config-digest.js';
 import { StdioUpstream } from './stdio.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/client';
 import type { Logger } from '../observability/logger.js';
@@ -59,7 +60,7 @@ interface Entry {
 }
 
 export class UpstreamManager {
-  readonly #config: GatewayConfig;
+  #config: GatewayConfig;
   readonly #entries = new Map<string, Entry>();
   readonly #options: UpstreamManagerOptions;
   readonly #statusListeners = new Set<(name: string, state: string) => void>();
@@ -182,6 +183,50 @@ export class UpstreamManager {
         .filter((e) => e.upstream.lazy !== true)
         .map((e) => this.#startEntry(e)),
     );
+  }
+
+  /**
+   * PLAN.md S7.1: apply a new configuration, touching ONLY the upstreams that changed.
+   *
+   * An upstream whose config is byte-identical after substitution is left completely alone
+   * — same object, same connection, same tokens. That is what keeps a reload from forcing
+   * every user to re-consent on an OAuth upstream whose entry did not change.
+   */
+  async reconfigure(next: GatewayConfig): Promise<void> {
+    this.#config = next;
+    const wanted = new Set(Object.keys(next.mcp));
+
+    for (const [name, entry] of [...this.#entries]) {
+      if (wanted.has(name)) continue;
+      this.#clearRetry(entry);
+      entry.unsubscribe();
+      await entry.upstream.stop().catch(() => undefined);
+      this.#entries.delete(name);
+      this.#emitStatus(name, 'removed');
+    }
+
+    for (const [name, upstreamConfig] of Object.entries(next.mcp)) {
+      if (!upstreamConfig.enabled) continue;
+      const existing = this.#entries.get(name);
+      if (existing !== undefined) {
+        if (digest(existing.upstream) === digest(upstreamConfig)) continue;
+        this.#clearRetry(existing);
+        existing.unsubscribe();
+        await existing.upstream.stop().catch(() => undefined);
+        this.#entries.delete(name);
+      }
+      this.#entries.set(name, {
+        upstream: this.#create(name, upstreamConfig),
+        failures: 0,
+        retryHandle: undefined,
+        lastFailureAt: 0,
+        lastEmittedState: undefined,
+        starting: false,
+        unsubscribe: () => undefined,
+      });
+    }
+
+    await this.start();
   }
 
   async stop(): Promise<void> {
