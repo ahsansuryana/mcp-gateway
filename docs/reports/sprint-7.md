@@ -207,7 +207,34 @@ because an earlier draft of that evidence was wrong in the direction that hides 
 | **B-37** | Wire the OAuth `sub` into the rate-limit bucket key. |
 | **B-35 / B-36** | Lazy authentication and scope step-up: implement, or accept as limitations? |
 
-## 8. Risks
+## 8. Docker resource cleanup
+
+The Docker host is **shared** — 55 containers and 80 volumes belonging to roughly a dozen
+unrelated projects. Everything below was removed **by exact name**, never by a bulk prune.
+
+| Resource | Kind | Removed |
+|---|---|---|
+| `s7linux` | container (Linux test runner) | yes |
+| `smoke-gw` | container (smoke test) | yes |
+| `treekill-probe` | container (ADR 0010 probe) | yes |
+| `nopsp` | container (ADR 0010 control) | yes |
+| `mcp-gateway:s7` | image + its 19 build layers | yes |
+| `smoke-cfg` | volume | yes |
+
+Deliberately **left alone**:
+
+- **`node:24-bookworm-slim`** — it looks like it belongs to this sprint because the tests ran
+  in it, but it was pulled on **2026-10-06, five days before Sprint 7 started**. Removing it
+  would have deleted an image this project never pulled.
+- **Build cache** — 603 entries / 5.35 GB, all reclaimable, but shared across every project on
+  the host. Pruning it would free space at the cost of other people's rebuilds, which is not a
+  decision this sprint is entitled to make.
+- Every other container, image and volume on the host.
+
+Post-cleanup state confirmed: the 6 resources are absent, `n8n` still running, the base image
+still present, 79 of 80 volumes intact.
+
+## 9. Risks
 
 | Risk | Assessment |
 |---|---|
