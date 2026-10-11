@@ -145,6 +145,15 @@ See `docs/adr/0008-rfc8707-resource-parameter-interim.md` and the draft issue at
 - Gateway-owned files that will hold credentials (OAuth token store) are specified in
   Sprint 5 with 0600 mode and atomic writes; they are not yet implemented.
 
+## Related documents
+
+- `docs/CONFIG.md` — every configuration field, generated from the schema.
+- `docs/OPERATIONS.md` — deployment options, key generation, firewall notes, troubleshooting.
+- `docs/MANUAL-TESTS.md` — tests that require a real deployment.
+- `docs/adr/0008-rfc8707-resource-parameter-interim.md` — the audience-binding deviation
+  above.
+- `docs/adr/0005-inbound-oauth-resource-server.md` — why the gateway holds no signing key.
+
 ## Reporting a vulnerability
 
 This project is not yet published to a security contact. Until it is, open an issue in
