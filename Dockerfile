@@ -43,6 +43,17 @@ COPY gateway.schema.json ./
 COPY scripts ./scripts
 COPY docs/SECURITY.md docs/OPERATIONS.md ./docs/
 
+# F-1: the smoke test must make a REAL tools/call, so it needs a real upstream. The smoke
+# upstream is a dedicated single-tool stdio server rather than the suite's fixture, whose
+# argv-driven tools include `hang` (never answers) and `crash` (exits non-zero) -- a smoke
+# test must not depend on which tool its own parser happens to pick.
+# PLAN.md D15: local only, no network. Its deps (@modelcontextprotocol/server, zod) are
+# already in the runtime node_modules, so this adds no new dependency to the image.
+COPY spikes/smoke/fake-upstream.mjs ./spikes/smoke/fake-upstream.mjs
+# The smoke configuration is baked in so `scripts/smoke.sh` needs no volume and no
+# host bind-mount; the remote Docker host cannot mount a Windows drive at all (B-29).
+COPY spikes/smoke/gateway.json ./spikes/smoke/gateway.json
+
 # `data/` holds the AES-256-GCM token store. Created and owned by the runtime user so the
 # store is never world-readable, and mounted as a volume in compose.
 RUN mkdir -p /app/data && chown -R node:node /app
