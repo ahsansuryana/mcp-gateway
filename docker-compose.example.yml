@@ -1,0 +1,47 @@
+# mcp-gateway — example compose file.
+#
+# Copy to `docker-compose.yml` and edit. Never commit a copy holding real secrets.
+#
+# The gateway needs two environment variables:
+#   GATEWAY_API_KEY   the inbound static bearer key (D9)
+#   GATEWAY_TOKEN_KEY base64 32-byte AES-256-GCM key, ONLY when an upstream uses OAuth
+#
+# Generate the second with:  openssl rand -base64 32
+#
+# NOTE: the `data/` volume holds the encrypted token store. Losing it loses every stored
+# upstream credential; losing GATEWAY_TOKEN_KEY makes the store undecryptable even if the
+# file survives. Back up BOTH together, or neither.
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp-gateway:local
+    # Named volume, not a bind mount: the store must be writable by the non-root `node`
+    # user and must not inherit host directory permissions.
+    volumes:
+      - gateway-data:/app/data
+    environment:
+      # Names only. Values belong in a .env file next to this one, which is git-ignored.
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:?set GATEWAY_API_KEY in .env}
+      GATEWAY_TOKEN_KEY: ${GATEWAY_TOKEN_KEY:?set GATEWAY_TOKEN_KEY in .env}
+      GATEWAY_CONFIG: /app/config/gateway.json
+      PORT: "3000"
+    ports:
+      # Bound to loopback by default. Put a TLS-terminating reverse proxy in front and
+      # change this only if the gateway must be directly reachable — see
+      # docs/OPERATIONS.md for the deployment options.
+      - "127.0.0.1:3000:3000"
+    # Compose's own restart policy; the gateway's SIGTERM handling (PLAN.md S7.3) is what
+    # makes this safe: it stops accepting, drains for up to 10s, then tears down upstreams.
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  gateway-data:
