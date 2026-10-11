@@ -59,28 +59,50 @@ export interface TokenResult {
 
 export class ResourceServer {
   readonly #options: ResourceServerOptions;
-  readonly #jwks: ReturnType<typeof createRemoteJWKSet>;
+  /** Built lazily so JWKS discovery can be async and cached. */
+  #jwksPromise: Promise<ReturnType<typeof createRemoteJWKSet>> | undefined;
 
   constructor(options: ResourceServerOptions) {
     this.#options = options;
-    // verified: node_modules/jose/dist/types/jwks/remote.d.ts
-    //   (createRemoteJWKSet(url, options?: RemoteJWKSetOptions)) — a key resolver with its
-    //   own cache, cooldown and timeout. A remote resolver is used even for a configured
-    //   jwksUri so key rotation is picked up without a restart.
-    //
-    // 30s timeout: Anthropic gives an authorization server 10s for its OAuth endpoints, and a
-    // slow JWKS fetch must fail the request rather than hang it.
-    this.#jwks = createRemoteJWKSet(
-      new URL(options.jwksUri ?? defaultJwksUri(options.issuer)),
-      {
+  }
+
+  /**
+   * Resolves the JWKS URI, then builds the remote key set.
+   *
+   * verified: node_modules/jose/dist/types/jwks/remote.d.ts
+   *   - `createRemoteJWKSet(url, options)` — a key resolver with its own cache.
+   *   - `cooldownDuration`: "Time in milliseconds after a successful fetch before a missing
+   *     key can trigger another fetch … Defaults to 30000 (30 seconds)." That IS the
+   *     "unknown kid refreshes at most once per cooldown" requirement, so jose's built-in
+   *     handling is used instead of a hand-rolled retry.
+   *   - `cacheMaxAge`: "Maximum age of cached keys in milliseconds … Defaults to 600000".
+   *
+   * A remote resolver is used even for a CONFIGURED `jwksUri`, so key rotation is picked up
+   * without a restart.
+   */
+  async #jwks(): Promise<ReturnType<typeof createRemoteJWKSet>> {
+    this.#jwksPromise ??= (async () => {
+      const uri = await this.#resolveJwksUri();
+      return createRemoteJWKSet(new URL(uri), {
         timeoutDuration: 10_000,
         cooldownDuration: 30_000,
         cacheMaxAge: 600_000,
-        ...(options.fetchFn === undefined
+        ...(this.#options.fetchFn === undefined
           ? {}
-          : { [Symbol.for('jose.fetch')]: options.fetchFn }),
-      },
-    );
+          : { [Symbol.for('jose.fetch')]: this.#options.fetchFn }),
+      });
+    })();
+    return this.#jwksPromise;
+  }
+
+  /** The explicit `jwksUri` wins; otherwise `jwks_uri` is read from the issuer's metadata. */
+  async #resolveJwksUri(): Promise<string> {
+    if (this.#options.jwksUri !== undefined) return this.#options.jwksUri;
+    return discoverJwksUri({
+      issuer: this.#options.issuer,
+      logger: this.#options.logger,
+      ...(this.#options.fetchFn === undefined ? {} : { fetchFn: this.#options.fetchFn }),
+    });
   }
 
   get issuer(): string {
@@ -144,7 +166,7 @@ export class ResourceServer {
     if (token === undefined || token.length === 0) return { ok: false, reason: 'missing' };
 
     try {
-      const { payload } = await jwtVerify(token, this.#jwks, {
+      const { payload } = await jwtVerify(token, await this.#jwks(), {
         issuer: this.#options.issuer,
         audience: this.#options.audience,
         // Only asymmetric algorithms. `none` and HMAC are excluded by construction: a
@@ -173,16 +195,138 @@ function classify(err: unknown): TokenRejection {
   return 'malformed';
 }
 
+/** How long a discovered `jwks_uri` is reused before the metadata is read again. */
+export const DISCOVERY_TTL_MS = 600_000;
+
+/** Process-wide discovery cache, keyed by issuer. */
+const discoveryCache = new Map<string, { jwksUri: string; fetchedAt: number }>();
+
+export interface DiscoverOptions {
+  issuer: string;
+  logger: Logger;
+  fetchFn?: typeof fetch;
+}
+
 /**
- * The conventional JWKS location for an issuer.
+ * Reads `jwks_uri` from the issuer's authorization-server metadata.
  *
- * When `jwksUri` is not configured the real JWKS URI comes from the issuer's
- * authorization-server metadata (`jwks_uri`). That discovery is the SDK's
- * `discoverAuthorizationServerMetadata()`; until it is wired, this conventional path is the
- * documented default and a mismatch surfaces as `unknown_key`, not as a silent pass.
+ * Rules, all required by the human's instruction:
+ *   - the metadata's `issuer` MUST equal the configured issuer exactly (RFC 8414 §3.3);
+ *   - metadata is fetched ONLY from URLs derived from the configured issuer;
+ *   - the resulting `jwks_uri` MUST be https, except for a loopback host;
+ *   - the result is cached with a TTL;
+ *   - nothing from the document is logged except the issuer values.
+ *
+ * verified: docs/ref/spec-2026-07-28-basic-authorization-authorization-server-discovery.md
+ *   lines 77-94 — for an issuer WITH a path, try path-insertion RFC 8414, then OIDC
+ *   path-insertion, then OIDC path-appending. For one WITHOUT a path, the two root forms.
  */
-function defaultJwksUri(issuer: string): string {
-  return new URL('/.well-known/jwks.json', issuer).href;
+export async function discoverJwksUri(options: DiscoverOptions): Promise<string> {
+  const issuer = normaliseIssuer(options.issuer);
+  const cached = discoveryCache.get(issuer);
+  if (cached !== undefined && Date.now() - cached.fetchedAt < DISCOVERY_TTL_MS) {
+    return cached.jwksUri;
+  }
+
+  const fetchFn = options.fetchFn ?? fetch;
+  let lastProblem = 'no endpoint responded';
+
+  for (const url of wellKnownCandidates(issuer)) {
+    let document: Record<string, unknown>;
+    try {
+      const response = await fetchFn(url);
+      if (!response.ok) {
+        lastProblem = `status ${response.status}`;
+        continue;
+      }
+      document = (await response.json()) as Record<string, unknown>;
+    } catch {
+      lastProblem = 'request failed';
+      continue;
+    }
+
+    // Exact string comparison. Normalising here would silently accept a document claiming
+    // to be a different issuer.
+    if (document['issuer'] !== issuer) {
+      options.logger.warn(
+        {
+          configuredIssuer: issuer,
+          advertisedIssuer: typeof document['issuer'] === 'string' ? document['issuer'] : '(absent)',
+        },
+        'authorization server metadata issuer does not match the configured issuer; rejecting',
+      );
+      throw new JwksDiscoveryError(
+        'authorization server metadata issuer does not match gateway.authOAuth.issuer',
+      );
+    }
+
+    const jwksUri = document['jwks_uri'];
+    if (typeof jwksUri !== 'string' || jwksUri.length === 0) {
+      lastProblem = 'no jwks_uri in the metadata';
+      continue;
+    }
+    assertSafeJwksUri(jwksUri);
+    discoveryCache.set(issuer, { jwksUri, fetchedAt: Date.now() });
+    return jwksUri;
+  }
+
+  throw new JwksDiscoveryError(
+    `could not discover jwks_uri for the configured issuer (${lastProblem})`,
+  );
+}
+
+/** Trailing-slash-insensitive, otherwise verbatim: an issuer is compared as a string. */
+function normaliseIssuer(issuer: string): string {
+  return issuer.endsWith('/') && issuer.length > 8 ? issuer.slice(0, -1) : issuer;
+}
+
+function wellKnownCandidates(issuer: string): string[] {
+  const url = new URL(issuer);
+  const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
+  const root = `${url.protocol}//${url.host}`;
+  return path === ''
+    ? [`${root}/.well-known/oauth-authorization-server`, `${root}/.well-known/openid-configuration`]
+    : [
+        `${root}/.well-known/oauth-authorization-server${path}`,
+        `${root}/.well-known/openid-configuration${path}`,
+        `${root}${path}/.well-known/openid-configuration`,
+      ];
+}
+
+/**
+ * https required, except for a loopback host.
+ *
+ * The check is written out rather than delegated because `jose` does NOT export an
+ * `isHttpsUrl` helper from its public entry point (verified:
+ * node_modules/jose/dist/types/index.d.ts and node_modules/jose/dist/types/util/, which has
+ * base64url, decode_jwt, decode_protected_header and errors only).
+ */
+function assertSafeJwksUri(jwksUri: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(jwksUri);
+  } catch {
+    throw new JwksDiscoveryError('jwks_uri in the authorization server metadata is not a URL');
+  }
+  if (parsed.protocol === 'https:') return;
+  const host = parsed.hostname.replace(/^\[/, '').replace(/\]$/, '');
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return;
+  throw new JwksDiscoveryError(
+    'jwks_uri in the authorization server metadata is not https and the host is not loopback',
+  );
+}
+
+/** A discovery failure safe to report; never carries key material. */
+export class JwksDiscoveryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'JwksDiscoveryError';
+  }
+}
+
+/** Test seam: clears the process-wide discovery cache. */
+export function clearJwksDiscoveryCache(): void {
+  discoveryCache.clear();
 }
 
 /** Never log a token. This exists so that temptation has one obvious place to be removed. */
