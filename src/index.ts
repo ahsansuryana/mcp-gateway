@@ -35,6 +35,55 @@ export interface RunningGateway {
  */
 export const SHUTDOWN_GRACE_MS = 5_000;
 
+/**
+ * PLAN.md S7.3: how long in-flight requests may finish after the listener stops accepting.
+ */
+export const DRAIN_MS = 10_000;
+
+/**
+ * Stops accepting new connections, then waits for in-flight requests to finish.
+ *
+ * `server.close()` only stops the LISTENER; existing keep-alive connections and in-flight
+ * responses must be given time, and the promise only settles once they are done. The
+ * deadline is a backstop so a stuck request cannot hold the process open forever.
+ *
+ * verified: nodejs.org/api/http.html#serverclosecallback (server.close — "Stops the server
+ *   from accepting new connections and closes all connections connected to this server
+ *   which are not sending a request or waiting for a response"; the callback fires when
+ *   all connections are ended).
+ */
+function closeServer(server: Server, drainMs: number, logger: Logger): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (how: string): void => {
+      if (settled) return;
+      settled = true;
+      logger.info({ how }, 'http listener closed');
+      resolve();
+    };
+
+    if (drainMs <= 0) {
+      server.closeAllConnections?.();
+      server.close(() => finish('immediate'));
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      logger.warn({ drainMs }, 'drain deadline exceeded; closing remaining connections');
+      // verified: nodejs.org/api/http.html#servercloseallconnections
+      server.closeAllConnections?.();
+      finish('drain-timeout');
+    }, drainMs);
+    timer.unref?.();
+
+    server.close(() => {
+      clearTimeout(timer);
+      finish('drained');
+    });
+    // New connections are refused from this point on; existing ones keep their deadline.
+  });
+}
+
 export interface StartOptions {
   /** Overrides the config path (tests pass a fixture). */
   configPath?: string;
@@ -127,6 +176,10 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
     reloader,
     stop: async () => {
       reloader.stop();
+      // PLAN.md S7.3: stop accepting first, then drain in flight, THEN tear down. A
+      // caller mid-request when the process dies gets a truncated stream and no
+      // explanation, so accepting stops before anything is dismantled.
+      await closeServer(server, DRAIN_MS, logger);
       await stopFanout().catch(() => undefined);
       // A graceful stop gets SHUTDOWN_GRACE_MS in total. If it overruns, any child process
       // tree still alive is killed outright rather than being orphaned.
@@ -145,7 +198,11 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
         logger.warn('graceful shutdown deadline exceeded, killing child process trees');
         await manager.forceStopAll();
       }
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await closeServer(server, 0, logger);
+      // S7.3: flush the token store. TokenStore writes through on every change today, so
+      // this is a no-op that keeps the contract explicit: a future batching write must not
+      // be forgotten here.
+      await oauth?.store.flush().catch(() => undefined);
       logger.info('gateway stopped');
     },
   };

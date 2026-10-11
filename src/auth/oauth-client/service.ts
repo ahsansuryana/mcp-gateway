@@ -62,6 +62,11 @@ export class OAuthService {
   }
 
   /** The absolute callback URL for this deployment. Q4 is open, so it is localhost. */
+  /** The encrypted store, so the shutdown path can flush it (S7.3). */
+  get store(): TokenStore {
+    return this.#options.store;
+  }
+
   get callbackUrl(): string {
     const host = this.#options.config.gateway.host;
     // `0.0.0.0` is a bind address, not a name the browser can reach back to.
