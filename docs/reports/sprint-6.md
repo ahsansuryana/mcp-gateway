@@ -141,8 +141,13 @@ has exited with exit status 255 ...
 stderr=ssh: connect to host 100.100.1.1 port 22: Permission denied
 ```
 
-**NOT RUN, not a pass.** Tracked as S5-LINUX in `docs/BACKLOG.md`; it must close before
-Sprint 7. The `chmod 0600` assertion is still the one thing that has never run on Linux.
+**NOT RUN at the time of writing, and not claimed as a pass.** Tracked as S5-LINUX.
+
+> **Closed 2026-10-10 (Sprint 7, P7-1).** The cause was a VPN on the human's side. With it
+> off, the remote Docker host answered and the full matrix ran green on Linux:
+> typecheck 0, lint 0, **246 tests passed / 20 files**, `npm audit` 0 vulnerabilities.
+> 246 rather than Windows' 245 + 1 skipped, because the POSIX-only `chmod 0600` token-store
+> assertion ran and passed. Evidence in `docs/reports/sprint-7.md`.
 
 ## 5. Defects found and fixed
 
