@@ -180,12 +180,23 @@ without any one of them MRTR through a gateway fails. Sources are cited in
   result the SDK server seam checks the REQUEST's declared client capabilities and answers
   `-32021 MissingRequiredClientCapability` for anything undeclared. A gateway client that does
   not declare `elicitation` therefore never sees the upstream's `input_required` result at all.
-- **(c) OPEN RISK — the static declaration vs downstream clients without elicitation.** Because
-  (b) is a STATIC declaration on the gateway's upstream client, the gateway will advertise to
-  the upstream that it supports elicitation even when the actual downstream client for this
-  particular request does not. The gateway cannot currently narrow that per request. Recorded
-  in `docs/adr/0003-mrtr-elicitation-capability.md`; the fix must not be attempted without a
-  decision.
+- **(c) RESOLVED in Sprint 7 — the SDK enforces this per request; the gateway adds nothing.**
+  Because (b) is a STATIC declaration on the upstream client, the gateway advertises
+  `elicitation` to every upstream even when the downstream client for a particular request
+  does not declare it. The gateway cannot narrow its outbound envelope, BUT it does not have
+  to: before returning an `input_required` result the SDK server seam checks THAT request's
+  declared client capabilities and answers `-32021 MissingRequiredClientCapability` for
+  anything undeclared. A downstream client that cannot answer an elicitation request
+  therefore never receives one. `input_required` continues to be relayed **unchanged**,
+  `requestState` included, to clients that did declare the capability.
+
+  verified: `node_modules/@modelcontextprotocol/server/dist/mcp-DIH4cS6P.mjs` lines 1229-1235;
+  measured end to end in `spikes/probe-mrtr-downstream.mjs` and pinned by
+  `test/e2e/mrtr-elicitation.e2e.test.ts`.
+
+  Decision, evidence and the rejected alternatives: `docs/adr/0003-mrtr-elicitation-capability.md`
+  (Accepted). Option (E) of that ADR is also implemented: a `warn` when an upstream answers
+  `-32601`, naming the upstream only.
 
 ---
 

@@ -1,6 +1,6 @@
 # ADR 0003 — MRTR elicitation: static upstream declaration vs per-request downstream clients
 
-- Status: **Proposed — decision recommended, NOT implemented** (human instruction: propose, do not implement in Sprint 5)
+- Status: **Accepted** — human decision 2026-10-10 (Sprint 7, P7-5)
 - Date: 2026-10-10 (Sprint 5 pre-step, completed with Sprint 4 S4.7 live evidence)
 - Addresses: PLAN.md §5 "MRTR proxy requirements" point **(c)**, an open risk found in Sprint 3
 
@@ -204,18 +204,69 @@ channel:
 A client that did not declare a capability the upstream requires is a protocol-level
 condition, so the SDK's choice is the one consistent with D12.
 
-### Not implemented. Awaiting a human decision.
+## Decision (human, 2026-10-10)
 
-Implementing it would mean intercepting a typed SDK error and re-shaping it, i.e. exactly the
-"custom compatibility layer" the human asked to be consulted about. No code was changed.
+**(A) is adopted.** The SDK's native behaviour is accepted: a downstream client that did not
+declare `elicitation` receives `-32021` with the SDK's explanatory message. No custom
+per-request logic. The `isError` condition the human originally proposed is **withdrawn**,
+because the empirical evidence shows the SDK already enforces the equivalent with a
+spec-defined error code.
 
-Options for the human:
+**(E) is adopted**, with the log naming the upstream and nothing else from the request.
 
-- **(A) Accept the SDK's behaviour.** Nothing to build. The risk in §5(c) is already
-  contained, just not with the exact error shape originally imagined.
-- **(B) Keep the static declaration AND downgrade the error.** Only if a client is
-  demonstrably unable to handle `-32021`.
-- **(C) Widen the upstream declaration instead.** Not applicable; it is already static.
+PLAN.md §5(c) was amended to state the resolved behaviour rather than an open risk.
+
+### Evidence recorded for the accepted behaviour
+
+Command run, from the repository root, on the pre-Sprint-7 tree:
+
+```
+npx tsx spikes/probe-mrtr-downstream.mjs
+```
+
+Downstream client: `new Client({ name: 'probe-plain', version: '0.0.0' }, { versionNegotiation:
+{ mode: { pin: '2026-07-28' } }, defaultCacheTtlMs: 0, capabilities: {} })` — **no
+`elicitation` capability declared**. Upstream: the in-repo fake's `needs_input` tool, which
+returns `input_required` with an `elicitation/create` request.
+
+Observed output, verbatim:
+
+```
+downstream capabilities: null
+RESULT type     : JSON-RPC ERROR (thrown)
+name            : ProtocolError
+code            : -32021
+message         : Cannot request input 'proceed' (elicitation/create): the request's
+                  client capabilities do not declare the required capability
+```
+
+The probe is kept at `spikes/probe-mrtr-downstream.mjs` so the observation is reproducible.
+
+### Regression tests
+
+`test/e2e/mrtr-elicitation.e2e.test.ts` pins both halves:
+
+1. A downstream client WITHOUT `elicitation` receives `-32021` and **never** the
+   `input_required`; the message names the missing capability.
+2. A downstream client WITH `elicitation` receives the `input_required` unchanged, including
+   `requestState`, and two consecutive rounds carry identical `inputRequests`.
+
+A dependency change that alters this fails there loudly rather than silently changing what
+downstream clients see.
+
+### Implementation note for (E): where -32601 actually arrives
+
+The first implementation detected `-32601` in the `catch` block and **never fired**. Measured:
+an upstream answering `-32601` arrives as an **`isError` tool result**, not a thrown error:
+
+- S4.7 recorded `{"content":[{"type":"text","text":"MCP error -32601: Method not found"}],"isError":true}`
+  from `@modelcontextprotocol/server-everything@2026.8.31`;
+- the SDK server converts a thrown `ProtocolError` from a tool handler into the same shape,
+  but **drops the numeric code**, keeping only the handler's own message.
+
+So the detector matches the RESULT (`isError === true` plus `-32601` or "method not found" in
+the text), and the fixture deliberately returns the canonical text rather than throwing —
+otherwise the test would exercise a shape no real upstream produces.
 
 ## Related
 

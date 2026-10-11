@@ -137,7 +137,7 @@ export async function aggregateCallTool(
   }
 
   try {
-    return await upstream.callTool(
+    const result = await upstream.callTool(
       parsed.name,
       args,
       meta,
@@ -145,6 +145,21 @@ export async function aggregateCallTool(
       extra,
       hooks.onUpstreamProgress === undefined ? undefined : { onprogress: hooks.onUpstreamProgress },
     );
+    // ADR 0003 option (E). Measured, not assumed: an upstream answering -32601 arrives as
+    // an `isError` TOOL RESULT carrying the message, not as a thrown error. S4.7 saw exactly
+    // that shape from @modelcontextprotocol/server-everything:
+    //   {"content":[{"type":"text","text":"MCP error -32601: Method not found"}],"isError":true}
+    // and the SDK server converts a thrown ProtocolError from a tool handler into the same
+    // shape. Detecting it in the catch block alone would never have fired.
+    if (isMethodNotFoundResult(result)) {
+      // The log names the UPSTREAM ONLY: no tool name, no arguments, no headers, no token.
+      deps.logger.warn(
+        { upstream: parsed.server, code: JSON_RPC_METHOD_NOT_FOUND },
+        "upstream answered method-not-found; if this tool needs elicitation the upstream " +
+          "does not accept this gateway's declared elicitation capability (ADR 0003)",
+      );
+    }
+    return result;
   } catch (err) {
     deps.logger.warn(
       { upstream: parsed.server, tool: parsed.name, reason: err instanceof Error ? err.message : String(err) },
@@ -152,6 +167,28 @@ export async function aggregateCallTool(
     );
     return unavailable(parsed.server, 'error');
   }
+}
+
+/**
+ * JSON-RPC `Method not found`.
+ * verified: docs/ref/spec-2026-07-28-basic-index.md (JSON-RPC 2.0 error codes; -32601)
+ */
+const JSON_RPC_METHOD_NOT_FOUND = -32601;
+
+/**
+ * True when a tool result is an `isError` whose text reports JSON-RPC `-32601`.
+ *
+ * Both spellings are matched because upstream servers differ: some embed the numeric code
+ * (`MCP error -32601: Method not found`), others only the description.
+ */
+function isMethodNotFoundResult(result: { isError?: boolean | undefined; content?: unknown }): boolean {
+  if (result.isError !== true) return false;
+  const blocks = Array.isArray(result.content) ? result.content : [];
+  const text = blocks
+    .map((block: unknown) => (block as { text?: unknown } | null)?.text)
+    .filter((v: unknown): v is string => typeof v === 'string')
+    .join(' ');
+  return text.includes(String(JSON_RPC_METHOD_NOT_FOUND)) || /method not found/i.test(text);
 }
 
 /** PLAN.md §8 wording for D12's tool result text. */

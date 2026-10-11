@@ -58,6 +58,11 @@ export interface FakeOptions {
   requireAuth?: boolean;
   /** The one bearer token this protected fake accepts. */
   requireAuthToken?: string;
+  /**
+   * Registers a tool whose handler answers with JSON-RPC -32601 Method not found, the way a
+   * strict upstream refuses a capability it does not accept. Sprint 7 ADR 0003 (E).
+   */
+  methodNotFoundTool?: string;
   /** Every `WWW-Authenticate` challenge the fake has emitted; lets a test assert discovery. */
   challenges?: string[];
 }
@@ -99,6 +104,30 @@ export async function startFakeUpstream(options: FakeOptions): Promise<FakeUpstr
               },
       },
     );
+
+    if (options.methodNotFoundTool !== undefined) {
+      const name = options.methodNotFoundTool;
+      // verified: docs/ref/spec-2026-07-28-basic-index.md (JSON-RPC 2.0; -32601 is
+      //   METHOD_NOT_FOUND, the code S4.7 observed from the vendor reference server).
+      server.registerTool(
+        name,
+        { description: 'Always answers JSON-RPC -32601.', inputSchema: z.object({}).passthrough() },
+        () => {
+          // Deliberately returns the CANONICAL upstream shape rather than throwing.
+          //
+          // Measured in S4.7 against @modelcontextprotocol/server-everything@2026.8.31:
+          //   {"content":[{"type":"text","text":"MCP error -32601: Method not found"}],
+          //    "isError":true}
+          // The SDK server converts a thrown ProtocolError from a handler into an isError
+          // result but DROPS the numeric code, so a thrown error would not exercise the
+          // real-world shape the gateway has to recognise.
+          return {
+            content: [{ type: 'text' as const, text: 'MCP error -32601: Method not found' }],
+            isError: true,
+          };
+        },
+      );
+    }
 
     server.registerTool(
       'echo',
