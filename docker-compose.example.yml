@@ -21,7 +21,15 @@ services:
     # Named volume, not a bind mount: the store must be writable by the non-root `node`
     # user and must not inherit host directory permissions.
     volumes:
+      # F-4: the config bind mount was MISSING while GATEWAY_CONFIG pointed at
+      # /app/config/gateway.json, so the example could not start -- the container exited
+      # immediately with "could not read the config file at /app/config/gateway.json".
+      # Read-only so the real config stays on the host and is never baked into an image.
+      - ./gateway.json:/app/config/gateway.json:ro
       - gateway-data:/app/data
+    env_file:
+      # Names in .env; the file is git-ignored and should be mode 600.
+      - .env
     environment:
       # Names only. Values belong in a .env file next to this one, which is git-ignored.
       GATEWAY_API_KEY: ${GATEWAY_API_KEY:?set GATEWAY_API_KEY in .env}

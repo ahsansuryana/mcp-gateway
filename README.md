@@ -18,6 +18,7 @@ Documentation:
 |---|---|
 | [`docs/CONFIG.md`](docs/CONFIG.md) | Every configuration field, generated from the schema |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, "config is code", known spec deviations |
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | **Step-by-step runbook for your own subdomain** |
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Deployment, keys, firewall, troubleshooting |
 | [`docs/MANUAL-TESTS.md`](docs/MANUAL-TESTS.md) | Tests that need a real deployment |
 | [`docs/reports/project-summary.md`](docs/reports/project-summary.md) | What exists and what is verified where |
