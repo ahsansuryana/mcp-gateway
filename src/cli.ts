@@ -6,6 +6,7 @@
 // argv handling is pure so the behaviour is unit-testable; only `main()` touches process.
 
 import { pathToFileURL } from 'node:url';
+import { main } from './index.js';
 
 import {
   CONFIG_PATH_ENV_VAR,
@@ -24,11 +25,14 @@ export interface CliOutcome {
   code: number;
   stdout: string;
   stderr: string;
+  /** True when the command is `serve`: the caller must start the gateway. */
+  serve?: boolean;
 }
 
 export const USAGE = `mcp-gateway — aggregated MCP gateway
 
 Usage:
+  mcp-gateway serve [-c <path>]     run the gateway (default)
   mcp-gateway validate [-c <path>]   validate a gateway config and exit
   mcp-gateway help                   show this message
 
@@ -52,6 +56,10 @@ export function run(argv: readonly string[]): CliOutcome {
   if (command === '--version' || command === '-v') {
     return { code: EXIT_OK, stdout: 'mcp-gateway 0.0.0\n', stderr: '' };
   }
+  // PLAN.md §5 lists `serve` as a command. It was MISSING: `run()` only knew `help` and
+  // `validate`, so the container image's `CMD ["serve"]` exited with a usage error and the
+  // gateway could only be started by passing no arguments at all.
+  if (command === 'serve') return { code: EXIT_OK, stdout: '', stderr: '', serve: true };
   if (command !== 'validate') {
     return { code: EXIT_USAGE, stdout: '', stderr: `unknown command: ${command}\n\n${USAGE}` };
   }
@@ -162,5 +170,31 @@ if (invokedDirectly) {
   const outcome = run(process.argv.slice(2));
   if (outcome.stdout.length > 0) process.stdout.write(outcome.stdout);
   if (outcome.stderr.length > 0) process.stderr.write(outcome.stderr);
-  process.exitCode = outcome.code;
+
+  if (outcome.serve === true) {
+    // PLAN.md section 5 lists `serve` as a CLI command, and the container image runs
+    // `node dist/cli.js serve`. Without this the command exited with a usage error, which is
+    // how the missing command was found: the smoke container refused to start.
+    const flag = parseConfigFlag(process.argv.slice(3));
+    if (flag.error !== undefined) {
+      process.stderr.write(`${flag.error}
+`);
+      process.exitCode = EXIT_USAGE;
+    } else {
+      // `-c <path>` is consumed here so the gateway does not see an unknown flag.
+      const argv = flag.path === undefined ? [] : ['--config', flag.path];
+      process.argv = [process.argv[0] ?? 'node', process.argv[1] ?? 'cli.js', ...argv];
+      // Deliberately NOT awaited at top level. `main()` returns once the server is
+      // listening and the open listener is what keeps the process alive; awaiting it made
+      // Node report "unsettled top-level await" and exit.
+      void main().catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`${message}
+`);
+        process.exitCode = 1;
+      });
+    }
+  } else {
+    process.exitCode = outcome.code;
+  }
 }

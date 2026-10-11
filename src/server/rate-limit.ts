@@ -42,6 +42,15 @@ export class RateLimiter {
   readonly #windowMs: number;
   readonly #now: () => number;
   readonly #buckets = new Map<string, Bucket>();
+  /**
+   * Insertion order, so eviction is O(1) per entry instead of sorting.
+   *
+   * An earlier version sorted the whole map on every check once the cap was reached. Past
+   * MAX_BUCKETS that meant one O(n log n) sort PER REQUEST: on the Linux CI host the
+   * 'memory stays bounded' test took 5.7 s and timed out. Bounded memory is the goal;
+   * paying a sort per request to achieve it is not acceptable.
+   */
+  #order: string[] = [];
   /** Guards against unbounded growth from a flood of distinct subjects. */
   #lastSweep = 0;
 
@@ -71,6 +80,7 @@ export class RateLimiter {
     const existing = this.#buckets.get(key);
     if (existing === undefined) {
       this.#buckets.set(key, { tokens: this.#limit - 1, updatedAt: now });
+      this.#order.push(key);
       this.#maybeSweep(now);
       return { allowed: true, remaining: this.#limit - 1 };
     }
@@ -113,15 +123,19 @@ export class RateLimiter {
     if (!stale && now - this.#lastSweep < this.#windowMs) return;
     this.#lastSweep = now;
 
-    for (const [key, bucket] of this.#buckets) {
-      if (now - bucket.updatedAt >= this.#windowMs) this.#buckets.delete(key);
+    for (const key of this.#order) {
+      const bucket = this.#buckets.get(key);
+      if (bucket !== undefined && now - bucket.updatedAt >= this.#windowMs) this.#buckets.delete(key);
     }
     if (this.#buckets.size <= MAX_BUCKETS) return;
 
-    // Still over the cap after the age sweep: evict oldest first.
-    const byAge = [...this.#buckets.entries()].sort((a, b) => a[1].updatedAt - b[1].updatedAt);
-    for (const [key] of byAge.slice(0, this.#buckets.size - MAX_BUCKETS)) {
-      this.#buckets.delete(key);
+    // Still over the cap after the age sweep: evict in INSERTION order from the front of
+    // the queue. O(1) per entry, and insertion order is a fair proxy for age here because
+    // the age sweep already removed everything genuinely expired.
+    while (this.#buckets.size > MAX_BUCKETS) {
+      const oldest = this.#order.shift();
+      if (oldest === undefined) break;
+      this.#buckets.delete(oldest);
     }
   }
 
@@ -139,5 +153,6 @@ export class RateLimiter {
 
   clear(): void {
     this.#buckets.clear();
+    this.#order = [];
   }
 }

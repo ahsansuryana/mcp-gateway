@@ -2,6 +2,7 @@
 // server, and shuts down cleanly.
 
 import type { Server } from 'node:http';
+import { pathToFileURL } from 'node:url';
 
 import { loadConfig } from './config/load.js';
 import { aggregateToolsList, type ToolsAggregatorDeps } from './aggregate/tools.js';
@@ -243,7 +244,7 @@ function createOAuthServiceIfConfigured(
   return new OAuthService({ config, store, logger, port });
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   try {
     const gateway = await startGateway();
     const { logger } = gateway;
@@ -274,9 +275,14 @@ async function main(): Promise<void> {
 }
 
 // verified: https://nodejs.org/api/url.html#urlpathtofileurlpath-options (node:url pathToFileURL)
+//
+// `pathToFileURL` is imported at module scope rather than with `await import()`. A top-level
+// await here made this module's evaluation suspend, so any OTHER module importing it --
+// including `cli.ts` implementing `serve` -- waited forever and Node reported
+// "unsettled top-level await". The static import costs nothing here and removes the hazard.
 const invokedDirectly =
   process.argv[1] !== undefined &&
-  import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]).href;
+  import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (invokedDirectly) {
   await main();

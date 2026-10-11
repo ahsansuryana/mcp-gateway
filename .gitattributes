@@ -1,0 +1,10 @@
+# A shell script with CRLF endings fails under `sh` with "Illegal option" and "not found".
+# Normalising it in the repository is the fix; the entry is what makes `git checkout`
+# produce LF on every platform.
+*.sh text eol=lf
+
+# Keep the rest as-is: the toolchain reads JSON and TypeScript with either ending, and
+# forcing LF everywhere would rewrite every file in the repository for no benefit.
+*.ts text
+*.json text
+*.md text
