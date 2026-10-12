@@ -28,3 +28,7 @@ coverage/
 .DS_Store
 .env
 .env.*
+
+# `npm pack` output. A tarball is a build artifact of the exact tree that was packed;
+# committing one pins a binary copy of the source that can then drift from it.
+*.tgz

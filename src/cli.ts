@@ -12,6 +12,7 @@
 // the interpreter path. `.gitattributes` pins this file to LF because development happens on
 // Windows, which would otherwise check it out with CRLF and break every Linux install.
 
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { main } from './index.js';
 
@@ -254,8 +255,30 @@ Never overwrites an existing file. Written with mode 0600.
 // ---------------------------------------------------------------------------
 
 // verified: https://nodejs.org/api/url.html#urlpathtofileurlpath-options (node:url pathToFileURL)
-const invokedDirectly =
-  process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url;
+// verified: https://nodejs.org/api/fs.html#fsrealpathsyncpath-options (node:fs realpathSync)
+//
+// SYMLINKS MUST BE RESOLVED, OR THE GLOBAL INSTALL SILENTLY DOES NOTHING.
+//
+// npm installs `bin` as a symlink: /usr/local/bin/mcp-gateway -> ../lib/node_modules/…/cli.js.
+// Node resolves symlinks when it loads the main module, so `import.meta.url` is the REAL
+// path while `process.argv[1]` stays the SYMLINK path. Comparing them directly made
+// `invokedDirectly` false, the entry point never ran, and the command exited 0 printing
+// nothing at all -- the most confusing possible failure, because it looks like success.
+//
+// Measured in node:24-bookworm-slim after `npm i -g ./pkg.tgz`:
+//   node /usr/local/lib/node_modules/…/dist/cli.js --version  -> @ahsansuryana/… 0.1.0
+//   /usr/local/bin/mcp-gateway --version                       -> (no output), rc=0
+const invokedDirectly = ((): boolean => {
+  const arg = process.argv[1];
+  if (arg === undefined) return false;
+  let candidate = arg;
+  try {
+    candidate = realpathSync(arg);
+  } catch {
+    // A path that cannot be resolved is compared as given.
+  }
+  return pathToFileURL(candidate).href === import.meta.url;
+})();
 
 // Guarded so importing this module from a test never touches the real process.
 if (invokedDirectly) {
