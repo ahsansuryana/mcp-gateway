@@ -99,15 +99,55 @@ export function resolveConfigLocation(inputs: ResolveInputs): ResolvedConfigPath
     return { path, source: 'flag', legacy: false };
   }
 
-  const candidates = candidatePaths(inputs);
-  for (const path of candidates) {
-    if (!exists(path)) continue;
-    const legacy = path === join(inputs.cwd, CONFIG_FILENAME);
-    const source: ConfigSource =
-      path === candidates[2] ? 'project' : path === candidates[3] ? 'home' : legacy ? 'legacy' : 'env';
-    return { path, source, legacy };
+  const { candidates, sources } = rankedCandidates(inputs);
+  for (let i = 0; i < candidates.length; i += 1) {
+    const path = candidates[i];
+    if (path === undefined || !exists(path)) continue;
+    const source = sources[i] ?? 'env';
+    return { path, source, legacy: source === 'legacy' };
   }
   return { checked: candidates };
+}
+
+/**
+ * Candidates paired with their source.
+ *
+ * The source is carried ALONGSIDE each path rather than recovered from its index: the
+ * array's contents shift depending on whether a flag and an env var are present, so index
+ * arithmetic silently labels the winning candidate with the wrong source the moment any of
+ * those is absent.
+ */
+function rankedCandidates(inputs: Omit<ResolveInputs, 'exists'>): {
+  candidates: string[];
+  sources: ConfigSource[];
+} {
+  const { flag, env, cwd, homedir: home } = inputs;
+  const candidates: string[] = [];
+  const sources: ConfigSource[] = [];
+
+  if (flag !== undefined && flag.length > 0) {
+    candidates.push(resolveAgainst(cwd, flag));
+    sources.push('flag');
+  }
+
+  const fromEnv = env[CONFIG_PATH_ENV_VAR];
+  if (fromEnv !== undefined && fromEnv.length > 0) {
+    candidates.push(resolveAgainst(cwd, fromEnv));
+    sources.push('env');
+  }
+
+  candidates.push(join(cwd, CONFIG_DIR_NAME, CONFIG_FILENAME));
+  sources.push('project');
+
+  const gateHome = env[HOME_DIR_ENV_VAR];
+  const homeRootDir = gateHome !== undefined && gateHome.length > 0 ? gateHome : home;
+  candidates.push(join(homeRootDir, CONFIG_DIR_NAME, CONFIG_FILENAME));
+  sources.push('home');
+
+  candidates.push(join(cwd, CONFIG_FILENAME));
+  sources.push('legacy');
+
+  return { candidates, sources };
 }
 
 /** A literal `~` is never expanded; see ADR 0012 D2. */
