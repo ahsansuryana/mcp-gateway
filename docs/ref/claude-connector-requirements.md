@@ -52,7 +52,7 @@ break Claude, while its presence must not be *required* by us for Claude specifi
 | G1 | Serve RFC 9728 protected-resource metadata | p1 "Serve discovery metadata" | **Not implemented** — Sprint 6.1 |
 | G2 | Unauthenticated requests **MUST** be answered `401`; a `WWW-Authenticate` header on a `200` is **ignored** | p1 | **Not implemented** — Sprint 6.1 |
 | G3 | The `401` **MUST** carry `WWW-Authenticate: Bearer resource_metadata="<absolute HTTPS URL>"` | p1 | Not implemented |
-| G4 | The document's `resource` **MUST equal the MCP server URL exactly**, including any path component | p1 | For us: `https://example.invalid/mcp` |
+| G4 | The document's `resource` **MUST equal the MCP server URL exactly**, including any path component | p1 | For us: `https://<SUBDOMAIN>/mcp` |
 | G5 | `authorization_servers` **MUST** list the primary issuer **first**; Claude uses only the first entry and does not fall back | p1 | Not implemented |
 | G6 | Scopes: put `scope` in the `WWW-Authenticate` `401`, or Claude uses `scopes_supported` from the PRM | p1 | Not implemented |
 
@@ -80,7 +80,7 @@ Page 3, "Audience mismatch":
 Two consequences for Sprint 6.1:
 
 1. The audience we validate against is the **canonical** form of our MCP URL
-   (`https://example.invalid/mcp` — no trailing slash), not whatever a user typed into the
+   (`https://<SUBDOMAIN>/mcp` — no trailing slash), not whatever a user typed into the
    connector dialog.
 2. Claude **does** send `resource`. This is the consumer side of the deviation recorded in
    `docs/adr/0008-rfc8707-resource-parameter-interim.md`: we do not send it when *we* are the
@@ -322,7 +322,7 @@ metadata, not its marketing page.
 
 ## 6. What this changes in the implementation
 
-- Sprint 6.1's PRM `resource` **MUST** be `https://example.invalid/mcp` (G4) — the MCP path
+- Sprint 6.1's PRM `resource` **MUST** be `https://<SUBDOMAIN>/mcp` (G4) — the MCP path
   is part of the identity, not incidental.
 - The `401` **MUST** be a real `401` with `WWW-Authenticate`; a `200` carrying the header is
   ignored (G2, G3).
@@ -334,7 +334,7 @@ metadata, not its marketing page.
 ## Related
 
 - `docs/adr/0005-inbound-oauth-resource-server.md` — S6.0 gate, option A.
-- `docs/adr/0007-q4-resolved-and-cimd-self-served.md` — Q4, `https://example.invalid`.
+- `docs/adr/0007-q4-resolved-and-cimd-self-served.md` — Q4, `https://<SUBDOMAIN>`.
 - `docs/adr/0008-rfc8707-resource-parameter-interim.md` — the client-side deviation.
 - `docs/ref/oauth-flow.md` — the gateway as OAuth *client* (Sprint 5).
 - `docs/OPEN-QUESTIONS.md` — Q-CLAUDE-ERA, Q-CLAUDE-GAPS.

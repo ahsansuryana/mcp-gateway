@@ -15,7 +15,7 @@ repository assumes a particular deployment. **This section documents the options
 not choose one.**
 
 > **Important.** The hostname recorded in `docs/adr/0007-q4-resolved-and-cimd-self-served.md`
-> (`example.invalid`) is **also in use by another MCP server**. Nothing here binds to it,
+> (`<existing-hostname>`) is **also in use by another MCP server**. Nothing here binds to it,
 > deploys to it, or writes a script that targets it. Pick an option below and set
 > `publicUrl` accordingly in your own `gateway.json`.
 
@@ -23,7 +23,7 @@ not choose one.**
 
 ```
 https://gateway.example.com/mcp          -> the gateway
-https://example.invalid/mcp           -> your OTHER server, untouched
+https://<existing-hostname>/mcp          -> your OTHER server, untouched
 ```
 
 ```jsonc
@@ -31,8 +31,8 @@ https://example.invalid/mcp           -> your OTHER server, untouched
 "gateway": { "publicUrl": "https://gateway.example.com", "host": "0.0.0.0", "port": 3000 }
 ```
 
-- The gateway needs **no** inbound rule on `example.invalid`.
-- `example.invalid` could later be added as an **upstream** of the gateway if you want it
+- The gateway needs **no** inbound rule on `<existing-hostname>`.
+- `<existing-hostname>` could later be added as an **upstream** of the gateway if you want it
   aggregated, but that is a separate, optional step.
 - Both servers must be reachable from Anthropic's egress range (see §5).
 
@@ -42,11 +42,11 @@ https://example.invalid/mcp           -> your OTHER server, untouched
 
 ```
 https://gateway.example.com/mcp   -> the gateway (the only public MCP endpoint)
-                                  -> upstream: https://example.invalid/mcp
+                                  -> upstream: https://<existing-hostname>/mcp
 ```
 
 ```jsonc
-"mcp": { "other": { "type": "remote", "url": "https://example.invalid/mcp" } }
+"mcp": { "other": { "type": "remote", "url": "https://<existing-hostname>/mcp" } }
 ```
 
 - Tools appear as `other_<tool>`.

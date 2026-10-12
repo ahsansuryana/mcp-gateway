@@ -25,7 +25,7 @@ supporting only CIMD was unusable. Sprint 5 recorded this as Q-CIMD with three o
 
 **Q4 — hosting target: OPTION A, the gateway gets its OWN subdomain.**
 
-The hostname first recorded here, `example.invalid`, **collides with an existing MCP
+The hostname first recorded here, `<existing-hostname>`, **collides with an existing MCP
 server** the operator already runs. That host is not the gateway's and must not be bound,
 redirected, proxied to, or otherwise touched by this project.
 
