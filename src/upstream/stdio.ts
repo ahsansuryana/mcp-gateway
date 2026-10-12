@@ -133,9 +133,25 @@ export class StdioUpstream implements Upstream {
   async forceStop(): Promise<void> {
     const pid = this.pid;
     this.#clearIdleTimer();
+
+    // KILL THE TREE FIRST, THEN TEAR DOWN THE CLIENT. This ordering is load-bearing.
+    //
+    // `#teardown()` calls the SDK's `close()`, which signals the DIRECT child only. Once
+    // that child is gone, `ps --ppid <pid>` returns nothing, so `tree-kill` can no longer
+    // discover the descendants it exists to kill: they are already orphaned and survive
+    // indefinitely. Doing teardown first therefore made `forceStop()` silently degrade
+    // into exactly the direct-child-only kill it exists to prevent.
+    //
+    // Measured on linux/arm64 with procps 4.0.2, before this fix:
+    //   child     THREW (gone)          <- killed, as expected
+    //   grandchild 1497 Sl MainThread   <- ALIVE, still running
+    //
+    // The tree kill happens first and the client close second. `close()` on an already
+    // killed child fails, and that is fine: teardown is best-effort by contract.
+    const result = pid === undefined ? undefined : await killProcessTree(pid);
+
     await this.#teardown().catch(() => undefined);
-    if (pid === undefined) return;
-    const result = await killProcessTree(pid);
+    if (pid === undefined || result === undefined) return;
     if (result.treeOnly) {
       // `ps` is unavailable, so grandchildren of a wrapper survive. Logged rather than
       // swallowed: silently claiming a tree kill would be a lie.

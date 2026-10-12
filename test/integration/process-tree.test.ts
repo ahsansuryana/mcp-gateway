@@ -51,7 +51,28 @@ function hasPs(): boolean {
   }
 }
 
-/** True while `pid` still exists. Windows uses tasklist, POSIX uses signal 0. */
+/**
+ * True while `pid` is still RUNNING. Windows uses tasklist; POSIX reads the state from `ps`.
+ *
+ * A ZOMBIE IS NOT ALIVE, and `process.kill(pid, 0)` cannot tell the difference.
+ *
+ * Signal 0 only asks "does this PID exist in the process table", and a SIGKILLed process
+ * whose parent died in the same instant is never reaped: it is reparented to PID 1 and
+ * stays in state Z indefinitely whenever PID 1 does not call wait(). In a container PID 1 is
+ * typically `sleep` or the test runner, neither of which reaps anything.
+ *
+ * Measured, in node:24-bookworm-slim with procps:
+ *
+ *   AFTER grandchild 359 Z    MainThread alive=true     <- process.kill(359, 0) succeeded
+ *
+ * So the original helper reported a correctly-killed process as alive, and the tree-kill
+ * test failed on any host where the zombie was never reaped -- ubuntu-latest CI, and this
+ * arm64 host -- while passing on Windows, which has no zombie state at all. The kill was
+ * never broken; only this predicate was wrong.
+ *
+ * A zombie executes no code, holds no files or memory, and cannot be signalled. Treating it
+ * as dead is the correct semantics for "is this process still running".
+ */
 function isAlive(pid: number): boolean {
   try {
     if (process.platform === 'win32') {
@@ -62,8 +83,15 @@ function isAlive(pid: number): boolean {
       // "INFO: No tasks are running..." is the empty result.
       return out.includes(String(pid));
     }
-    process.kill(pid, 0);
-    return true;
+    // `ps` is available here by construction: this suite is the one that decides whether a
+    // POSIX tree can be walked at all, and the degraded branch below is covered too.
+    const stat = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (stat.length === 0) return false;
+    // Z = zombie, Z+ = zombie with a pending `&` disposition. Both are dead.
+    return !stat.startsWith('Z');
   } catch (err) {
     // EPERM means the process exists but is not ours to signal.
     return (err as NodeJS.ErrnoException).code === 'EPERM';
@@ -131,7 +159,6 @@ describe('S4.5 process tree termination', () => {
     expect(isAlive(grandchildPid!)).toBe(true);
 
     await upstream.forceStop?.();
-
     // The direct child must always die.
     expect(await waitUntil(() => !isAlive(childPid!), 15_000)).toBe(true);
     expect(upstream.status().state).toBe('disabled');

@@ -3,10 +3,21 @@ dist/
 coverage/
 
 # PLAN.md rule 10: never commit a config that can hold real secrets.
-gateway.json
+#
+# ANCHORED WITH A LEADING SLASH ON PURPOSE. A bare `gateway.json` matches at EVERY depth,
+# so it also swallowed `spikes/smoke/gateway.json` -- the smoke configuration the Dockerfile
+# COPYs in. That file was therefore never committed, and `docker build` still worked locally
+# because the untracked file was sitting in the working directory. CI checked out a clean
+# tree and failed with:
+#
+#   failed to calculate checksum ... "/spikes/smoke/gateway.json": not found
+#
+# Only the repository root holds an operator config.
+/gateway.json
 
-# Runtime state (OAuth token store, Sprint 5+).
-data/
+# Runtime state (OAuth token store, Sprint 5+). Anchored for the same reason: a bare
+# `data/` would also match any documentation or fixture directory of that name.
+/data/
 
 *.log
 .DS_Store

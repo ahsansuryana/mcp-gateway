@@ -248,7 +248,21 @@ describe('S4.3 lifecycle', () => {
   }, 30_000);
 
   it('startupTimeoutMs is enforced (the child never answers in time)', async () => {
-    const upstream = makeUpstream({ startupTimeoutMs: 500 });
+    // The fixture is given an explicit startup delay so the child GENUINELY cannot answer
+    // within the budget.
+    //
+    // This test used to pass no delay at all and simply relied on spawning Node and
+    // importing the MCP SDK taking longer than 500 ms. That made it a machine-speed test,
+    // not a timeout test: it passed on a slow Windows host and failed on ubuntu-latest CI,
+    // where the child was ready in well under 500 ms and the state came back 'ready'. It
+    // would also have passed for the wrong reason on a host that was merely slow.
+    //
+    // With a delay the outcome is the same everywhere, because the child is made slow
+    // rather than found slow.
+    const upstream = makeUpstream({
+      startupTimeoutMs: 500,
+      command: [process.execPath, FIXTURE, '--startup-delay=5000'],
+    });
     await upstream.start();
     const status = upstream.status();
     expect(status.state).not.toBe('ready');
