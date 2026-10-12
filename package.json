@@ -1,10 +1,22 @@
 {
-  "name": "mcp-gateway",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@ahsansuryana/mcp-gateway",
+  "version": "0.1.0",
   "description": "Aggregated MCP gateway: one POST /mcp endpoint in front of many remote and local MCP upstreams.",
   "type": "module",
   "license": "MIT",
+  "bin": {
+    "mcp-gateway": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "gateway.schema.json",
+    "gateway.example.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20.19.0"
   },
@@ -17,7 +29,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "gen:schema": "tsx scripts/gen-schema.ts"
+    "gen:schema": "tsx scripts/gen-schema.ts",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.3.1",

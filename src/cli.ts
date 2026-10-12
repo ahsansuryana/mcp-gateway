@@ -1,11 +1,19 @@
+#!/usr/bin/env node
 // PLAN.md S1.4: `validate -c <file>` exits 0 on a valid config and 1 with a
 // human-readable list of errors (key path + reason, never values).
 //
 // PLAN.md rule 9: no secret value ever reaches stdout/stderr or an exit message.
 //
 // argv handling is pure so the behaviour is unit-testable; only `main()` touches process.
+//
+// THIS SHEBANG IS LOAD-BEARING. `dist/cli.js` is the `bin` target for `npm i -g`, so the
+// kernel execs it directly and line 1 must be exactly `#!/usr/bin/env node`. A shebang
+// that is not the first line is not a shebang; one with a CRLF carries an invisible \r into
+// the interpreter path. `.gitattributes` pins this file to LF because development happens on
+// Windows, which would otherwise check it out with CRLF and break every Linux install.
 
-import { pathToFileURL } from 'node:url';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { main } from './index.js';
 
 import {
@@ -33,18 +41,67 @@ export const USAGE = `mcp-gateway — aggregated MCP gateway
 
 Usage:
   mcp-gateway serve [-c <path>]     run the gateway (default)
+  mcp-gateway init [--local]        create a starter config in .mcp-gateway/
   mcp-gateway validate [-c <path>]   validate a gateway config and exit
   mcp-gateway help                   show this message
 
 Options:
   -c, --config <path>   config file path
-                        (default: $${CONFIG_PATH_ENV_VAR} or ./gateway.json)
+                        (default: $${CONFIG_PATH_ENV_VAR}, or ./.mcp-gateway/gateway.json,
+                         or <home>/.mcp-gateway/gateway.json)
+
+Config is searched in this order, first hit wins:
+  1. -c / --config <path>
+  2. $${CONFIG_PATH_ENV_VAR}
+  3. ./.mcp-gateway/gateway.json
+  4. $GATEWAY_HOME (or your home directory) + /.mcp-gateway/gateway.json
+  5. ./gateway.json                    deprecated, warns
 
 Exit codes:
   0  config is valid
   1  config is invalid
   2  usage error
 `;
+
+/**
+ * Reads name and version from the package manifest that ships with this file.
+ *
+ * `dist/cli.js` sits one level below the package root, so `../package.json` is the manifest
+ * both in a checkout and in an installed global package. npm always includes package.json in
+ * a tarball regardless of the `files` whitelist.
+ *
+ * Both values are constants in a shipped package, never user input. The fallbacks exist only
+ * so a missing or malformed manifest degrades to something printable instead of throwing a
+ * parse error out of `--version`.
+ */
+function readManifest(): { name: string; version: string } {
+  const fallback = { name: 'mcp-gateway', version: '0.0.0' };
+  try {
+    // verified: nodejs.org/api/url.html#urlfileurltopathname-options (URL fileURLToPath)
+    const manifestPath = fileURLToPath(new URL('../package.json', import.meta.url));
+    const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    if (typeof parsed === 'object' && parsed !== null) {
+      const { name, version } = parsed as { name?: unknown; version?: unknown };
+      return {
+        name: typeof name === 'string' && name.length > 0 ? name : fallback.name,
+        version: typeof version === 'string' && version.length > 0 ? version : fallback.version,
+      };
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** The package name, e.g. `@ahsansuryana/mcp-gateway`. Used to build the published $schema URL. */
+export function packageName(): string {
+  return readManifest().name;
+}
+
+/** The package version, e.g. `0.1.0`. */
+export function packageVersion(): string {
+  return readManifest().version;
+}
 
 /** Pure argv handling (PLAN.md S1.4). */
 export function run(argv: readonly string[]): CliOutcome {
@@ -61,7 +118,10 @@ export function run(argv: readonly string[]): CliOutcome {
     return { code: EXIT_OK, stdout: USAGE, stderr: '' };
   }
   if (command === '--version' || command === '-v') {
-    return { code: EXIT_OK, stdout: 'mcp-gateway 0.0.0\n', stderr: '' };
+    // Read from package.json rather than hardcoding it. The previous hardcoded
+    // 'mcp-gateway 0.0.0' was already wrong the moment the version changed, and `0.0.0`
+    // is not the version this package would ever be published under.
+    return { code: EXIT_OK, stdout: `${packageName()} ${packageVersion()}\n`, stderr: '' };
   }
   // PLAN.md §5 lists `serve` as a command. It was MISSING: `run()` only knew `help` and
   // `validate`, so the container image's `CMD ["serve"]` exited with a usage error and the

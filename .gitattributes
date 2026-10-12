@@ -3,6 +3,14 @@
 # produce LF on every platform.
 *.sh text eol=lf
 
+# THE SHEBANG MUST BE LINE 1 AND MUST BE LF. `dist/cli.js` is the `bin` entry for a global
+# install, and a shebang that is not the first line is not a shebang at all: the kernel
+# refuses to exec the file and the error names the interpreter, not the cause. A CRLF
+# shebang fails the same way with an invisible \r glued to `node`. Development happens on
+# Windows, which checks this file out with CRLF unless told otherwise, so the rule has to
+# live here rather than in a convention.
+src/cli.ts text eol=lf
+
 # Keep the rest as-is: the toolchain reads JSON and TypeScript with either ending, and
 # forcing LF everywhere would rewrite every file in the repository for no benefit.
 *.ts text
