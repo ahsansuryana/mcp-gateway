@@ -244,9 +244,23 @@ function createOAuthServiceIfConfigured(
   return new OAuthService({ config, store, logger, port });
 }
 
-export async function main(): Promise<void> {
+/**
+ * Process entry point.
+ *
+ * `configPath` is what `cli.ts` parsed out of `-c` / `--config`. It was MISSING: `main()`
+ * called `startGateway()` with no options, so the flag `cli.ts` rewrote into `process.argv`
+ * was never read and the gateway silently fell back to `$GATEWAY_CONFIG` or `./gateway.json`.
+ *
+ * That went unnoticed twice over. `serve` itself did not exist until S7.6, so there was
+ * nothing to pass the flag to; and when `GATEWAY_CONFIG` happens to hold the same value the
+ * fallback is indistinguishable from working. The result was that `-c <path>` appeared to
+ * work and quietly started the wrong config.
+ */
+export async function main(options: { configPath?: string } = {}): Promise<void> {
   try {
-    const gateway = await startGateway();
+    const gateway = await startGateway(
+      options.configPath === undefined ? {} : { configPath: options.configPath },
+    );
     const { logger } = gateway;
     let shuttingDown = false;
     const shutdown = (signal: NodeJS.Signals): void => {

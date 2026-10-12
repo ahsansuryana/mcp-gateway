@@ -50,7 +50,14 @@ Exit codes:
 export function run(argv: readonly string[]): CliOutcome {
   const [command, ...rest] = argv;
 
-  if (command === undefined || command === 'help' || command === '--help' || command === '-h') {
+  // No command at all means SERVE, which is what USAGE has always claimed ("serve
+  // [-c <path>] run the gateway (default)"). It did not: `run([])` fell into the same
+  // branch as `help` and printed usage, so `npm start` and `npm run dev` exited without
+  // starting anything while the help text said otherwise. With no arguments there is no
+  // other command the user could have meant, so serving is the only sensible reading.
+  if (command === undefined) return { code: EXIT_OK, stdout: '', stderr: '', serve: true };
+
+  if (command === 'help' || command === '--help' || command === '-h') {
     return { code: EXIT_OK, stdout: USAGE, stderr: '' };
   }
   if (command === '--version' || command === '-v') {
@@ -61,6 +68,11 @@ export function run(argv: readonly string[]): CliOutcome {
   // gateway could only be started by passing no arguments at all.
   if (command === 'serve') return { code: EXIT_OK, stdout: '', stderr: '', serve: true };
   if (command !== 'validate') {
+    // A bare flag with no command word (`mcp-gateway -c ./gateway.json`) is the default
+    // serve with a config flag, not an unknown command. Without this, the moment `serve`
+    // became the default the only way to pass a path was to also type `serve`, which is
+    // exactly the redundancy the default exists to remove.
+    if (command.startsWith('-')) return { code: EXIT_OK, stdout: '', stderr: '', serve: true };
     return { code: EXIT_USAGE, stdout: '', stderr: `unknown command: ${command}\n\n${USAGE}` };
   }
   return runValidate(rest);
@@ -175,19 +187,28 @@ if (invokedDirectly) {
     // PLAN.md section 5 lists `serve` as a CLI command, and the container image runs
     // `node dist/cli.js serve`. Without this the command exited with a usage error, which is
     // how the missing command was found: the smoke container refused to start.
-    const flag = parseConfigFlag(process.argv.slice(3));
+    //
+    // The flags start one position later when a command word was given (`serve -c path`,
+    // slice(3)) and at the beginning when it was not (`-c path`, slice(2)), because a bare
+    // `-c` is now the default serve. Reading slice(3) unconditionally would silently drop
+    // the path and start the gateway on the wrong config.
+    const rest = process.argv.slice(2);
+    const restOffset = rest[0] === 'serve' ? 3 : 2;
+    const flag = parseConfigFlag(process.argv.slice(restOffset));
     if (flag.error !== undefined) {
       process.stderr.write(`${flag.error}
 `);
       process.exitCode = EXIT_USAGE;
     } else {
-      // `-c <path>` is consumed here so the gateway does not see an unknown flag.
-      const argv = flag.path === undefined ? [] : ['--config', flag.path];
-      process.argv = [process.argv[0] ?? 'node', process.argv[1] ?? 'cli.js', ...argv];
+      // The path goes to `main()` as an argument. It used to be rewritten into
+      // `process.argv` instead, and `main()` never read it -- so `-c` was silently ignored
+      // and the gateway fell back to $GATEWAY_CONFIG or ./gateway.json. Whenever
+      // GATEWAY_CONFIG held the same value this looked like it worked.
+      //
       // Deliberately NOT awaited at top level. `main()` returns once the server is
       // listening and the open listener is what keeps the process alive; awaiting it made
       // Node report "unsettled top-level await" and exit.
-      void main().catch((err: unknown) => {
+      void main(flag.path === undefined ? {} : { configPath: flag.path }).catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(`${message}
 `);

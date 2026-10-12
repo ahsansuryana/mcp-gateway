@@ -32,8 +32,11 @@ Documentation:
 npm ci
 cp gateway.example.json gateway.json     # then edit it
 export GATEWAY_API_KEY='...'             # or use {"env:GATEWAY_API_KEY"} in the file
-npm run dev                              # tsx src/cli.ts serve
+npm start                                # serve is the default command
 ```
+
+`serve` is the default, so `npm start`, `npm run dev`, `node dist/cli.js` and
+`node dist/cli.js -c ./gateway.json` all start the gateway. `npm start -- -c <path>` works too.
 
 Check it:
 

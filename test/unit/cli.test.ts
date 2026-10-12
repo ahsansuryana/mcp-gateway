@@ -74,7 +74,20 @@ describe('PLAN.md S1.4 cli validate', () => {
     expect(run(['validate', '-c']).code).toBe(EXIT_USAGE);
     expect(run(['validate', 'stray-arg']).code).toBe(EXIT_USAGE);
     expect(run(['help']).code).toBe(EXIT_OK);
+    // `serve` is documented as the default command, so no arguments must SERVE rather
+    // than print usage: `npm start` and `npm run dev` pass no arguments at all.
     expect(run([]).code).toBe(EXIT_OK);
+    expect(run([]).serve).toBe(true);
+    expect(run([]).stdout).toBe('');
+    expect(run(['serve']).serve).toBe(true);
+    // `help` must stay help -- the two are no longer the same branch.
+    expect(run(['help']).serve).toBeUndefined();
+    expect(run(['help']).stdout).toContain('Usage:');
+    // A bare config flag with no command word is the default serve, not an unknown
+    // command -- otherwise the only way to pass a path is to also type `serve`.
+    expect(run(['-c', 'x.json']).serve).toBe(true);
+    expect(run(['--config=x.json']).serve).toBe(true);
+    expect(run(['--version']).serve).toBeUndefined();
   });
 
   it('exits 1 when the file cannot be read, naming the path only', () => {
