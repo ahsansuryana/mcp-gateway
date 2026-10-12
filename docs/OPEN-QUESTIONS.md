@@ -462,3 +462,43 @@ Recorded explicitly rather than guessed, per PLAN.md §3 rule 3.
 **Decision needed (human):** whether to read the remaining referenced pages before choosing an
 authorization server. Sprint 6 does not need it — the fake in-repo authorization server is
 sufficient for S6.3.
+
+---
+
+## Added 2026-10-12 — global CLI and `.mcp-gateway` config directory
+
+### Q-CLI-1 — is `mcp-gateway` on npm really a different package?
+**What:** `npm view mcp-gateway` returns `mcp-gateway@1.0.0`, "Model Context Protocol
+Gateway", `bin: mcp-gateway`, owned by a third party.
+**Why it matters:** the package name cannot be used; only the command name can.
+**What was decided:** publish as `@ahsansuryana/mcp-gateway`, keep `bin: mcp-gateway`. The
+instruction to prefer the scoped name if the unscoped one is taken covers this, so it did not
+block. **Human check worth doing:** confirm the existing package is genuinely unrelated and
+not an earlier version of this project.
+
+### Q-CLI-2 — `{file:}` is cwd-relative, but `parseConfig` documents otherwise
+**What:** `substitute.ts` resolves `{file:path}` against `process.cwd()`; the doc comment on
+`parseConfig` claims `sourcePath` is used "to resolve relative `{file:...}` paths". The
+comment is false — `sourcePath` is not passed to `substitute()`.
+**Why it matters:** moving the config file into `.mcp-gateway/` does **not** move `{file:}`
+paths with it, and anyone assuming otherwise gets a startup error or, worse, silently reads a
+different secret.
+**What was decided:** behaviour kept unchanged (changing it would break existing deployments),
+comment corrected, documented in ADR 0012. A future change to config-relative resolution
+would be a breaking change needing its own ADR and a migration note.
+
+### Q-CLI-3 — should the token store's own directory be created 0700?
+**What:** `TokenStore` writes the file 0600 but creates the directory with
+`mkdir(recursive: true)` and no explicit mode, so the directory inherits the process umask.
+**Why it matters:** on a shared host the directory could end up group- or world-readable,
+which weakens the 0600 file mode.
+**What was decided:** create it 0700 where the platform allows it, keep 0600 on the file.
+Implemented in this task; POSIX-only test.
+
+### Q-CLI-4 — unknown: whether `npm i -g` must work without `sudo` on the operator's machine
+**What:** not determinable from the repository; it depends on where npm's global prefix lives
+on the target machine.
+**Why it matters:** the quick-start instructions are wrong for some installs.
+**What was decided:** the README shows the plain `npm i -g` form, which is correct on Node
+installs managed by nvm/volta/asdf and on machines where npm's prefix is user-writable, and
+adds a short note pointing at `npm config get prefix` otherwise. No code depends on the answer.
