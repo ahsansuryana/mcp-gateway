@@ -16,7 +16,12 @@
   "gateway": {
     "host": "0.0.0.0",
     "port": 3000,
-    "auth": { "type": "bearer", "keys": ["SMOKE-CANARY-KEY-0123456789"] },
+    // PLAN.md D7: the key is SUBSTITUTED from the environment, exactly as
+    // gateway.example.json does. It was a hardcoded literal, which made the smoke config
+    // only work for whoever knew that constant: CI passed GATEWAY_API_KEY=ci-smoke-key,
+    // the config expected a different literal, and every authenticated check answered
+    // 401. A smoke test whose credential is baked into it is not testing the real path.
+    "auth": { "type": "bearer", "keys": ["{env:GATEWAY_API_KEY}"] },
     "defaultTimeoutMs": 5000,
     "defaultTtlMs": 30000
   },
