@@ -4,7 +4,10 @@
 import type { Server } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
+import { existsSync } from 'node:fs';
+
 import { loadConfig } from './config/load.js';
+import { legacyTokenStorePathFor, tokenStorePathFor } from './config/paths.js';
 import { aggregateToolsList, type ToolsAggregatorDeps } from './aggregate/tools.js';
 import { buildHttpApp } from './server/http.js';
 import { createLogger, secretsFromConfig, type Logger } from './observability/logger.js';
@@ -15,7 +18,7 @@ import { ConfigErrorList } from './config/load.js';
 import type { GatewayConfig } from './config/schema.js';
 import { OAuthService } from './auth/oauth-client/service.js';
 import { TokenStore, loadTokenKey } from './auth/oauth-client/token-store.js';
-import { dirname, join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { ConfigReloader } from './server/reload.js';
 
 export interface RunningGateway {
@@ -235,10 +238,30 @@ function createOAuthServiceIfConfigured(
   // decrypt another's store, which surfaced as an upstream in `error`. It is anchored to
   // the CONFIG file's directory instead, and overridable per deployment.
   const configured = tokenStorePath ?? process.env['GATEWAY_TOKEN_STORE'];
-  const storePath =
+  let storePath =
     configured !== undefined && configured.length > 0
       ? resolve(configured)
-      : join(dirname(configPath), 'data', 'tokens.enc.json');
+      : tokenStorePathFor(configPath);
+
+  // ADR 0012 D3 — migration, not orphaning. Config that used to be ./gateway.json keeps
+  // its store at ./data/tokens.enc.json; with the config now at ./.mcp-gateway/gateway.json
+  // the default moved to ./.mcp-gateway/data/tokens.enc.json. If the old file exists and the
+  // new one does not, keep USING the old one and say so. Making the user re-consent with
+  // every upstream because a config file moved would be a self-inflicted outage, and
+  // silently starting with an empty store would look like a working gateway that had
+  // forgotten all its credentials.
+  if (
+    configured === undefined &&
+    !existsSync(storePath) &&
+    existsSync(legacyTokenStorePathFor(configPath))
+  ) {
+    storePath = resolve(legacyTokenStorePathFor(configPath));
+    logger.warn(
+      { tokenStore: storePath },
+      'using the token store at its pre-.mcp-gateway location; move it next to the config to silence this',
+    );
+  }
+
   const store = new TokenStore({ path: storePath, key });
   logger.info({ tokenStore: store.path }, 'upstream OAuth configured; encrypted token store enabled');
   return new OAuthService({ config, store, logger, port });

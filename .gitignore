@@ -15,6 +15,11 @@ coverage/
 # Only the repository root holds an operator config.
 /gateway.json
 
+# ADR 0012: per-installation state. Holds gateway.json, and data/ with the encrypted OAuth
+# token store. Anchored for the same reason: a bare `.mcp-gateway/` would also ignore a
+# directory of that name anywhere else in the tree.
+.mcp-gateway/
+
 # Runtime state (OAuth token store, Sprint 5+). Anchored for the same reason: a bare
 # `data/` would also match any documentation or fixture directory of that name.
 /data/

@@ -4,8 +4,9 @@
 //
 // PLAN.md rule 9: every message names the config key path, never a value.
 
-import { readFileSync } from 'node:fs';
-import { resolve as resolvePath } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir as osHomedir } from 'node:os';
+import { join } from 'node:path';
 import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser';
 
 import {
@@ -14,9 +15,15 @@ import {
   type GatewayConfig,
 } from './schema.js';
 import { substitute, SubstitutionError, type SubstituteOptions } from './substitute.js';
+import {
+  CONFIG_DIR_NAME,
+  CONFIG_FILENAME,
+  CONFIG_PATH_ENV_VAR,
+  DEFAULT_CONFIG_FILENAME,
+  resolveConfigLocation,
+} from './paths.js';
 
-export const DEFAULT_CONFIG_FILENAME = 'gateway.json';
-export const CONFIG_PATH_ENV_VAR = 'GATEWAY_CONFIG';
+export { CONFIG_PATH_ENV_VAR, DEFAULT_CONFIG_FILENAME };
 
 export interface ConfigError {
   /** Dotted key path, e.g. `mcp.github.url`. Never a value. */
@@ -43,6 +50,12 @@ export interface LoadOptions extends SubstituteOptions {
   path?: string;
   /** Environment used for BOTH `GATEWAY_CONFIG` lookup and `{env:...}` substitution. */
   env?: Readonly<Record<string, string | undefined>>;
+  /** Injected so the search order is testable without depending on the real cwd. */
+  cwd?: string;
+  /** Injected so the home candidate is testable on any machine. */
+  homedir?: string;
+  /** Injected existence predicate. */
+  exists?: (absolutePath: string) => boolean;
 }
 
 export interface LoadedConfig {
@@ -51,17 +64,45 @@ export interface LoadedConfig {
   path: string;
 }
 
-export function resolveConfigPath(explicit?: string, env: Readonly<Record<string, string | undefined>> = process.env): string {
-  if (explicit !== undefined && explicit.length > 0) return resolvePath(process.cwd(), explicit);
-  const fromEnv = env[CONFIG_PATH_ENV_VAR];
-  if (fromEnv !== undefined && fromEnv.length > 0) return resolvePath(process.cwd(), fromEnv);
-  return resolvePath(process.cwd(), DEFAULT_CONFIG_FILENAME);
+export function resolveConfigPath(
+  explicit?: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const found = resolveConfigLocation({
+    flag: explicit,
+    env,
+    cwd: process.cwd(),
+    homedir: osHomedir(),
+    exists: (p) => existsSync(p),
+  });
+  return 'path' in found ? found.path : join(process.cwd(), DEFAULT_CONFIG_FILENAME);
 }
 
-/** Reads the file named by `options.path` / `GATEWAY_CONFIG` / `./gateway.json`. */
+/** Reads the file named by `options.path` / `GATEWAY_CONFIG` / the `.mcp-gateway` search. */
 export function loadConfig(options: LoadOptions = {}): LoadedConfig {
   const env = options.env ?? process.env;
-  const path = resolveConfigPath(options.path, env);
+  const located = resolveConfigLocation({
+    flag: options.path,
+    env,
+    cwd: options.cwd ?? process.cwd(),
+    homedir: options.homedir ?? osHomedir(),
+    exists: options.exists ?? ((p) => existsSync(p)),
+  });
+
+  if (!('path' in located)) {
+    // Every candidate, so the operator can see exactly where it looked. No stack trace: this
+    // is a configuration mistake, not a crash.
+    throw new ConfigErrorList([
+      {
+        path: '<file>',
+        reason:
+          'no gateway config found. Checked:\n' +
+          located.checked.map((p) => `        - ${p}`).join('\n') +
+          `\n        Create one with: mcp-gateway init   (or --local for ${join(process.cwd(), CONFIG_DIR_NAME, CONFIG_FILENAME)})`,
+      },
+    ]);
+  }
+  const path = located.path;
 
   let raw: string;
   try {
@@ -86,7 +127,11 @@ export function loadConfig(options: LoadOptions = {}): LoadedConfig {
 /**
  * Parses, substitutes and validates an in-memory config document.
  *
- * `sourcePath` is only used to label errors and to resolve relative `{file:...}` paths.
+ * `sourcePath` is used ONLY to label errors. It does NOT resolve `{file:...}` paths:
+ * substitute.ts resolves those against `process.cwd()`, and sourcePath is never passed to
+ * it. That comment used to claim otherwise and was wrong (Q-CLI-2 in OPEN-QUESTIONS).
+ * Moving the config file therefore does not move `{file:}` paths with it -- ADR 0012 D4
+ * keeps the behaviour and fixes the documentation.
  */
 export function parseConfig(raw: string, sourcePath: string, options: SubstituteOptions = {}): LoadedConfig {
   const parseErrors: ParseError[] = [];

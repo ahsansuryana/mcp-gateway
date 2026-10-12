@@ -12,12 +12,12 @@
 // the interpreter path. `.gitattributes` pins this file to LF because development happens on
 // Windows, which would otherwise check it out with CRLF and break every Linux install.
 
-import { readFileSync } from 'node:fs';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { main } from './index.js';
 
-import {
-  CONFIG_PATH_ENV_VAR,
+import { runInit } from './config/init.js';
+import { packageName, packageVersion } from './package-info.js';
+import { CONFIG_PATH_ENV_VAR,
   ConfigErrorList,
   loadConfig,
   resolveConfigPath,
@@ -63,45 +63,7 @@ Exit codes:
   2  usage error
 `;
 
-/**
- * Reads name and version from the package manifest that ships with this file.
- *
- * `dist/cli.js` sits one level below the package root, so `../package.json` is the manifest
- * both in a checkout and in an installed global package. npm always includes package.json in
- * a tarball regardless of the `files` whitelist.
- *
- * Both values are constants in a shipped package, never user input. The fallbacks exist only
- * so a missing or malformed manifest degrades to something printable instead of throwing a
- * parse error out of `--version`.
- */
-function readManifest(): { name: string; version: string } {
-  const fallback = { name: 'mcp-gateway', version: '0.0.0' };
-  try {
-    // verified: nodejs.org/api/url.html#urlfileurltopathname-options (URL fileURLToPath)
-    const manifestPath = fileURLToPath(new URL('../package.json', import.meta.url));
-    const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    if (typeof parsed === 'object' && parsed !== null) {
-      const { name, version } = parsed as { name?: unknown; version?: unknown };
-      return {
-        name: typeof name === 'string' && name.length > 0 ? name : fallback.name,
-        version: typeof version === 'string' && version.length > 0 ? version : fallback.version,
-      };
-    }
-    return fallback;
-  } catch {
-    return fallback;
-  }
-}
 
-/** The package name, e.g. `@ahsansuryana/mcp-gateway`. Used to build the published $schema URL. */
-export function packageName(): string {
-  return readManifest().name;
-}
-
-/** The package version, e.g. `0.1.0`. */
-export function packageVersion(): string {
-  return readManifest().version;
-}
 
 /** Pure argv handling (PLAN.md S1.4). */
 export function run(argv: readonly string[]): CliOutcome {
@@ -126,6 +88,7 @@ export function run(argv: readonly string[]): CliOutcome {
   // PLAN.md §5 lists `serve` as a command. It was MISSING: `run()` only knew `help` and
   // `validate`, so the container image's `CMD ["serve"]` exited with a usage error and the
   // gateway could only be started by passing no arguments at all.
+  if (command === 'init') return runInitCommand(rest);
   if (command === 'serve') return { code: EXIT_OK, stdout: '', stderr: '', serve: true };
   if (command !== 'validate') {
     // A bare flag with no command word (`mcp-gateway -c ./gateway.json`) is the default
@@ -216,7 +179,15 @@ export function runValidate(argv: readonly string[]): CliOutcome {
     return { code: EXIT_OK, stdout: lines.join('\n') + '\n', stderr: '' };
   } catch (err) {
     if (err instanceof ConfigErrorList) {
-      const lines: string[] = [`INVALID  ${displayPath}`, '', `${err.errors.length} problem(s):`];
+      // When nothing was found, saying "INVALID <the default path>" is wrong: there is no
+      // file at that path to be invalid. The reason already lists every path that was
+      // checked, so the header only has to stop claiming a file exists.
+      const notFound = err.errors.some((e) => e.reason.startsWith('no gateway config found'));
+      const lines: string[] = [
+        notFound ? `NOT FOUND  ${displayPath}` : `INVALID  ${displayPath}`,
+        '',
+        `${err.errors.length} problem(s):`,
+      ];
       for (const e of err.errors) lines.push(`  - ${e.path}: ${e.reason}`);
       const hints = hintsFor(err.errors);
       if (hints.length > 0) {
@@ -228,6 +199,52 @@ export function runValidate(argv: readonly string[]): CliOutcome {
     throw err;
   }
 }
+
+/**
+ * `mcp-gateway init [--local]`
+ *
+ * Writes the shipped example config to `<GATEWAY_HOME or home>/.mcp-gateway/gateway.json`,
+ * or to `./.mcp-gateway/gateway.json` with `--local`.
+ */
+export function runInitCommand(argv: readonly string[]): CliOutcome {
+  let local = false;
+  for (const arg of argv) {
+    if (arg === '--local') {
+      local = true;
+      continue;
+    }
+    if (arg === '-h' || arg === '--help') {
+      return { code: EXIT_OK, stdout: INIT_USAGE, stderr: '' };
+    }
+    return {
+      code: EXIT_USAGE,
+      stdout: '',
+      stderr: `unknown option for init: ${arg}\n\n${INIT_USAGE}`,
+    };
+  }
+
+  const result = runInit({ local });
+  if (result.status === 'exists') {
+    // Not an error: the user's config already exists and rewriting it could destroy real
+    // credentials. A non-zero code still signals "init did not do what you asked".
+    return { code: EXIT_INVALID, stdout: '', stderr: `${result.message ?? ''}
+` };
+  }
+  return {
+    code: EXIT_OK,
+    stdout: `created ${result.path}\n` + 'edit it, then run: mcp-gateway\n',
+    stderr: '',
+  };
+}
+
+export const INIT_USAGE = `mcp-gateway init — create a starter config
+
+Usage:
+  mcp-gateway init            write <GATEWAY_HOME or home>/.mcp-gateway/gateway.json
+  mcp-gateway init --local    write ./.mcp-gateway/gateway.json instead
+
+Never overwrites an existing file. Written with mode 0600.
+`;
 
 // ---------------------------------------------------------------------------
 // Process entry point
