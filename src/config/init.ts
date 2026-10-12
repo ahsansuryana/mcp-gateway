@@ -25,7 +25,7 @@ export interface InitOptions {
 }
 
 export interface InitResult {
-  status: 'created' | 'exists';
+  status: 'created' | 'exists' | 'error';
   path: string;
   /** Set when the file already existed; never a reason to overwrite. */
   message?: string;
@@ -84,8 +84,34 @@ export function runInit(options: InitOptions = {}): InitResult {
   }
 
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-  const document = withPublishedSchema(readExample(), packageName(), packageVersion());
-  writeFileSync(target, document, { encoding: 'utf8', mode: 0o600 });
+
+  // Every failure here is reported as a sentence, never as a Node stack trace. The first
+  // real run of this inside the container printed a raw ENOENT for
+  // /app/gateway.example.json, which says nothing about the cause and looks like a crash.
+  let document: string;
+  try {
+    document = withPublishedSchema(readExample(), packageName(), packageVersion());
+  } catch {
+    return {
+      status: 'error',
+      path: target,
+      message:
+        `could not read the bundled gateway.example.json, so no config was written to ${target}\n` +
+        'this build of the package is incomplete; reinstall it',
+    };
+  }
+
+  try {
+    writeFileSync(target, document, { encoding: 'utf8', mode: 0o600 });
+  } catch {
+    return {
+      status: 'error',
+      path: target,
+      message:
+        `could not write ${target}\n` +
+        'check that the directory exists and is writable by the current user',
+    };
+  }
 
   return { status: 'created', path: target };
 }

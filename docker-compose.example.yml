@@ -2,15 +2,21 @@
 #
 # Copy to `docker-compose.yml` and edit. Never commit a copy holding real secrets.
 #
-# The gateway needs two environment variables:
+# The gateway needs these environment variables (NAMES ONLY):
 #   GATEWAY_API_KEY   the inbound static bearer key (D9)
 #   GATEWAY_TOKEN_KEY base64 32-byte AES-256-GCM key, ONLY when an upstream uses OAuth
+#   GATEWAY_HOME      where .mcp-gateway/ lives; set in the image to /home/node
 #
 # Generate the second with:  openssl rand -base64 32
 #
-# NOTE: the `data/` volume holds the encrypted token store. Losing it loses every stored
-# upstream credential; losing GATEWAY_TOKEN_KEY makes the store undecryptable even if the
-# file survives. Back up BOTH together, or neither.
+# FIRST RUN — put a config in the volume before starting the gateway:
+#
+#   docker compose run --rm gateway init          # writes /home/node/.mcp-gateway/gateway.json
+#   docker compose run --rm gateway validate      # optional: check it parses
+#   docker compose up -d
+#
+# `init` never overwrites an existing file. GATEWAY_API_KEY and GATEWAY_TOKEN_KEY stay
+# environment-based and are never written into the config file.
 
 services:
   gateway:
@@ -18,23 +24,21 @@ services:
       context: .
       dockerfile: Dockerfile
     image: mcp-gateway:local
-    # Named volume, not a bind mount: the store must be writable by the non-root `node`
-    # user and must not inherit host directory permissions.
+    # NAMED VOLUME, never a host bind mount. Two reasons, both hard:
+    #   - the Docker host is a REMOTE Armbian machine, so a Windows path cannot be mounted
+    #     there at all (B-29);
+    #   - a bind mount would hand the non-root `node` user whatever host permissions the
+    #     directory happens to carry.
+    # Docker seeds a fresh named volume from the image content at that path, including
+    # ownership, which is why the Dockerfile creates /home/node/.mcp-gateway as `node`.
+    # This one volume holds the config AND the encrypted token store.
     volumes:
-      # F-4: the config bind mount was MISSING while GATEWAY_CONFIG pointed at
-      # /app/config/gateway.json, so the example could not start -- the container exited
-      # immediately with "could not read the config file at /app/config/gateway.json".
-      # Read-only so the real config stays on the host and is never baked into an image.
-      - ./gateway.json:/app/config/gateway.json:ro
-      - gateway-data:/app/data
-    env_file:
-      # Names in .env; the file is git-ignored and should be mode 600.
-      - .env
+      - gateway-home:/home/node
     environment:
       # Names only. Values belong in a .env file next to this one, which is git-ignored.
       GATEWAY_API_KEY: ${GATEWAY_API_KEY:?set GATEWAY_API_KEY in .env}
       GATEWAY_TOKEN_KEY: ${GATEWAY_TOKEN_KEY:?set GATEWAY_TOKEN_KEY in .env}
-      GATEWAY_CONFIG: /app/config/gateway.json
+      GATEWAY_HOME: /home/node
       PORT: "3000"
     ports:
       # Bound to loopback by default. Put a TLS-terminating reverse proxy in front and
@@ -52,4 +56,4 @@ services:
       - no-new-privileges:true
 
 volumes:
-  gateway-data:
+  gateway-home:

@@ -36,10 +36,29 @@ RUN apt-get update \
 ENV NODE_ENV=production
 WORKDIR /app
 
+# ADR 0012 D5: the config directory lives under the HOME DIRECTORY, and GATEWAY_HOME says
+# so explicitly rather than relying on the image's user home.
+#
+# Why /home/node and not /app: `os.homedir()` returns /home/node for this user, so the CLI's
+# own default (`$GATEWAY_HOME or homedir()` + /.mcp-gateway/gateway.json) resolves there
+# with no extra flags -- which is what lets `docker compose run --rm gateway init` write
+# into the volume and a bare `docker compose up` find it. Setting the variable as well means
+# the layout does not silently change if the image's user home ever does.
+#
+# Why a NAMED VOLUME and never a host bind mount: the Docker host is a remote Armbian
+# machine, so a Windows path cannot be mounted there at all (B-29), and a bind mount would
+# also hand the non-root `node` user host directory permissions it should not inherit.
+# Docker seeds a fresh named volume from the image content at that path, INCLUDING
+# ownership, so creating the directory here is what makes the volume writable by `node`.
+ENV GATEWAY_HOME=/home/node
+
 COPY --from=build /app/dist ./dist
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY gateway.schema.json ./
+# `mcp-gateway init` reads this from the package root at runtime. Without it the image can
+# start the gateway but cannot create a config, and the failure was a raw ENOENT stack trace.
+COPY gateway.example.json ./
 COPY scripts ./scripts
 COPY docs/SECURITY.md docs/OPERATIONS.md ./docs/
 
@@ -54,9 +73,15 @@ COPY spikes/smoke/fake-upstream.mjs ./spikes/smoke/fake-upstream.mjs
 # host bind-mount; the remote Docker host cannot mount a Windows drive at all (B-29).
 COPY spikes/smoke/gateway.json ./spikes/smoke/gateway.json
 
-# `data/` holds the AES-256-GCM token store. Created and owned by the runtime user so the
-# store is never world-readable, and mounted as a volume in compose.
-RUN mkdir -p /app/data && chown -R node:node /app
+# Created here, owned by the runtime user, so a fresh named volume mounted at /home/node is
+# already writable by `node` when Docker seeds it. The OAuth token store goes to
+# /home/node/.mcp-gateway/data and is created 0700 at write time.
+# 0700 explicitly, because `mkdir` is masked by the umask and would otherwise leave the
+# config directory world-readable and listable inside the volume.
+RUN mkdir -p /home/node/.mcp-gateway \
+ && chmod 700 /home/node/.mcp-gateway \
+ && chown -R node:node /home/node \
+ && chown -R node:node /app
 
 # Non-root. verified: nodejs.org/api/docker.html#running-your-container-as-a-non-root-user
 USER node

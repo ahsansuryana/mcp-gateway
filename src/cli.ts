@@ -224,6 +224,9 @@ export function runInitCommand(argv: readonly string[]): CliOutcome {
   }
 
   const result = runInit({ local });
+  if (result.status === 'error') {
+    return { code: EXIT_INVALID, stdout: '', stderr: `${result.message ?? 'init failed'}\n` };
+  }
   if (result.status === 'exists') {
     // Not an error: the user's config already exists and rewriting it could destroy real
     // credentials. A non-zero code still signals "init did not do what you asked".
