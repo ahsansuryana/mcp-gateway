@@ -24,14 +24,20 @@ v2 pinned exactly.
 | **Inbound OAuth** | RFC 9728 protected-resource metadata, `WWW-Authenticate` challenge, JWT validation via `jose` against a discovered JWKS |
 | **Subscriptions** | `subscriptions/listen` fan-out with D17 debounce and truthful `listChanged` advertisement |
 | **Operations** | Hot reload + `SIGHUP`, rate limiting, graceful shutdown, Dockerfile, compose, smoke test |
+| **Distribution** | Installable as a global command (`@ahsansuryana/mcp-gateway`, bin `mcp-gateway`), config in `.mcp-gateway/`, `mcp-gateway init` |
 | **Docs** | Config reference (generated), security, operations, manual tests, ADRs, per-sprint reports |
 
 ## 2. What is verified, and where
 
 | Platform | Typecheck | Lint | Tests | Audit |
 |---|---|---|---|---|
-| **Windows** (local, Node 24.18) | 0 | clean | 27 files, **308 passed + 1 skipped** (309) | 0 vulnerabilities |
-| **Linux** (`node:24-bookworm-slim`, v24.21.0, arm64) | 0 | clean | 27 files, **309 passed, 0 skipped** | 0 vulnerabilities |
+| **Windows** (local, Node 24.18) | 0 | clean | 29 files, **329 passed + 4 skipped** (333) | 0 vulnerabilities |
+| **Linux** (`node:24-bookworm-slim` v24.21.0 **+ procps**, arm64) | 0 | clean | 29 files, **333 passed, 0 skipped** | 0 vulnerabilities |
+
+The 4 skips are POSIX-only permission assertions; they run and pass on Linux. The Linux run
+**must** have `procps` installed — without it the suite fails 4 assertions and the
+process-tree test silently takes its degraded branch, which is the configuration the shipped
+image provides (ADR 0010).
 
 Docker host: **Armbian 25.5.1, `linux/arm64`, Engine 28.3.2** — a *remote* host, so Windows
 paths cannot be bind-mounted and source travels as build context or a tar stream (B-29).
@@ -78,7 +84,8 @@ create or consume a bucket (F-3, closing B-37).
 | **The gateway's subdomain** | **Not yet supplied.** The value given was the literal placeholder `<SUBDOMAIN>`, so **no hostname was invented**: `publicUrl` stays configurable and unset in the repo. | The operator supplies the hostname |
 | **Deployment topology** | **Chosen: Option A**, the gateway's own subdomain. The hostname previously recorded in ADR 0007 collides with the operator's existing MCP server and must not be touched. | — resolved |
 | **Q-CLAUDE-GAPS** | Partly answered. **Still unknown: whether Claude's AS emits `iss`.** | Reading the remaining Anthropic pages |
-| **CI** | `.github/workflows/verify.yml` is written but the repository has **no git remote**, so it has never run. | A remote is configured and the workflow is pushed |
+| **CI** | `.github/workflows/verify.yml` runs and is green on `main`. It has **not** run on `feat/global-cli-and-config-dir`. | The branch is pushed |
+| **Publishing** | The package is **not published**; `npm publish` was deliberately not run. Verified only as a local tarball installed in a container. | A decision to publish |
 | **B-16** | `docs/CONFIG.md` is generated, but the CI drift *check* is not wired. | CI exists |
 | **B-33** | Token-store key rotation is unsupported. | A future hardening sprint |
 
@@ -86,12 +93,13 @@ create or consume a bucket (F-3, closing B-37).
 
 1. `README.md` — what it is and how to run it
 2. `docs/DEPLOY.md` — the option-A runbook, if you are deploying
-3. `docs/CONFIG.md` — every field, generated from the schema
-4. `docs/SECURITY.md` — threat model, "config is code", known deviations
-5. `docs/OPERATIONS.md` — deployment options, keys, firewall, troubleshooting
-6. `docs/MANUAL-TESTS.md` — the two deferred tests
-7. `docs/reports/project-summary.md` — this file
-8. Per-sprint reports in `docs/reports/` and `docs/adr/` for the reasoning behind each decision
+3. `docs/adr/0012-global-cli-and-config-dir.md` — why config lives in `.mcp-gateway/`
+4. `docs/CONFIG.md` — every field, generated from the schema
+5. `docs/SECURITY.md` — threat model, "config is code", known deviations
+6. `docs/OPERATIONS.md` — deployment options, keys, firewall, troubleshooting
+7. `docs/MANUAL-TESTS.md` — the two deferred tests
+8. `docs/reports/project-summary.md` — this file
+9. Per-sprint reports in `docs/reports/` and `docs/adr/` for the reasoning behind each decision
 
 ## 6. One-paragraph honesty note
 

@@ -51,8 +51,9 @@ Names only. Values go in the `.env` file in step 3.
 |---|---|---|
 | `GATEWAY_API_KEY` | yes | the inbound static bearer key (PLAN.md D9) |
 | `GATEWAY_TOKEN_KEY` | only with OAuth upstreams | base64 32-byte AES-256-GCM key for the token store |
-| `GATEWAY_CONFIG` | no | path to the config inside the container; defaults to `/app/gateway.json` |
-| `GATEWAY_TOKEN_STORE` | no | path to the encrypted token store; defaults to `/app/data/tokens.json` |
+| `GATEWAY_CONFIG` | no | path to the config inside the container. Rarely needed: the image sets `GATEWAY_HOME` so the default already resolves inside the volume |
+| `GATEWAY_HOME` | no | where `.mcp-gateway/` lives; the image sets it to `/home/node` |
+| `GATEWAY_TOKEN_STORE` | no | overrides the encrypted token store path; defaults to `<config dir>/data/tokens.enc.json` |
 | `PORT` | no | the port the gateway listens on inside the container; defaults to `3000` |
 
 Verified in `src/index.ts` (`GATEWAY_TOKEN_STORE`, and the `GATEWAY_CONFIG` default) and by the
@@ -153,22 +154,24 @@ GATEWAY_TOKEN_KEY=<value from step 1>
 
 ## 4. Compose file
 
-`/opt/mcp-gateway/docker-compose.yml`:
+`/opt/mcp-gateway/docker-compose.yml` — or just copy `docker-compose.example.yml`, which is
+this file already:
 
 ```yaml
 services:
   gateway:
     image: mcp-gateway:deploy
-    # Bind-mounted READ-ONLY so the real config stays on the host and is never baked
-    # into an image. This mount was missing from docker-compose.example.yml; the gateway
-    # exited at startup with "could not read the config file at /app/config/gateway.json".
+    # ONE named volume holds BOTH the config and the token store. Never a host bind mount:
+    # this Docker host is remote, so a local path cannot be mounted there at all (B-29),
+    # and a bind mount would hand the non-root `node` user the host directory's
+    # permissions. Docker seeds a fresh named volume from the image content at that path,
+    # INCLUDING ownership, which is why the image creates /home/node/.mcp-gateway.
     volumes:
-      - ./gateway.json:/app/config/gateway.json:ro
-      - gateway-data:/app/data
+      - gateway-home:/home/node
     env_file:
       - .env
     environment:
-      GATEWAY_CONFIG: /app/config/gateway.json
+      GATEWAY_HOME: /home/node
       PORT: "3000"
     # Loopback only. The TLS reverse proxy on the host reaches it from there; nothing
     # on the internet can reach the container port directly.
@@ -185,14 +188,27 @@ services:
       - no-new-privileges:true
 
 volumes:
-  gateway-data:
+  gateway-home:
 ```
 
 ```bash
 cd /opt/mcp-gateway
+docker compose run --rm gateway init     # MUST run first: the config is in the volume
 docker compose up -d
 docker compose ps
 docker compose logs -f gateway
+```
+
+`init` writes `/home/node/.mcp-gateway/gateway.json` inside the volume, mode 0600 under a
+0700 directory. It never overwrites an existing file, so re-running it is safe.
+
+If you prefer not to edit in place, or you already have a `gateway.json` to import:
+
+```bash
+docker compose run --rm gateway init
+docker cp ./gateway.json <container>:/home/node/.mcp-gateway/gateway.json
+# or, without a shell in the container:
+docker compose cp ./gateway.json gateway:/home/node/.mcp-gateway/gateway.json
 ```
 
 Expect `gateway listening` and no error. If it exits immediately, the usual cause is a config
@@ -400,7 +416,8 @@ check it against. Then:
 
 ```bash
 docker compose logs -f gateway        # follow
-docker compose restart gateway        # config reload also works: touch gateway.json,
+docker compose restart gateway        # config reload also works: edit the config in the
+                                      # volume, or send SIGHUP to the process,
                                       # or send SIGHUP to the process
 docker compose down                   # stop; drains for up to 10s first
 docker compose up -d --build          # rebuild after pulling changes

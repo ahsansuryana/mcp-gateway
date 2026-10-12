@@ -17,7 +17,7 @@ not choose one.**
 > **Important.** The hostname recorded in `docs/adr/0007-q4-resolved-and-cimd-self-served.md`
 > (`<existing-hostname>`) is **also in use by another MCP server**. Nothing here binds to it,
 > deploys to it, or writes a script that targets it. Pick an option below and set
-> `publicUrl` accordingly in your own `gateway.json`.
+> `publicUrl` accordingly in your own `.mcp-gateway/gateway.json`.
 
 ### Option A — the gateway gets its own subdomain
 
@@ -27,7 +27,7 @@ https://<existing-hostname>/mcp          -> your OTHER server, untouched
 ```
 
 ```jsonc
-// gateway.json (never committed)
+// ~/.mcp-gateway/gateway.json (never committed)
 "gateway": { "publicUrl": "https://gateway.example.com", "host": "0.0.0.0", "port": 3000 }
 ```
 
@@ -82,8 +82,32 @@ Names only. **Never commit a value.**
 |---|---|---|
 | `GATEWAY_API_KEY` | yes | The inbound static bearer key. Referenced as `{env:GATEWAY_API_KEY}`. |
 | `GATEWAY_TOKEN_KEY` | only when an upstream uses `oauth` | base64, exactly 32 bytes, AES-256-GCM |
-| `GATEWAY_CONFIG` | no | Path to the config file. Default `./gateway.json`. |
+| `GATEWAY_CONFIG` | no | Path to the config file. See the search order below. |
+| `GATEWAY_HOME` | no | Where `.mcp-gateway/` lives. Defaults to your home directory. The image sets it to `/home/node`. |
 | `GATEWAY_TOKEN_STORE` | no | Overrides the token store path. |
+
+### Where the config file is
+
+First hit wins:
+
+1. `-c <path>` / `--config <path>` — **authoritative**. Used as given; a missing file is an
+   error naming that path, never a silent fallback to another config.
+2. `$GATEWAY_CONFIG` — skipped, not fatal, when the file is missing.
+3. `./.mcp-gateway/gateway.json`
+4. `$GATEWAY_HOME` (else your home directory) `/.mcp-gateway/gateway.json`
+5. `./gateway.json` — deprecated; still works and warns once, so no existing install breaks.
+
+If none exists, the gateway exits non-zero listing every path it checked and pointing at
+`mcp-gateway init`. There is no stack trace: it is a configuration mistake, not a crash.
+
+The OAuth token store lives at `<config dir>/data/tokens.enc.json`, created 0700 with the
+file at 0600. If a store exists at the pre-`.mcp-gateway` location (`<config dir>/../data/…`)
+and not at the new one, it is **still used** and a warning names it — silently starting on an
+empty store would look like a working gateway that had forgotten every credential.
+
+> **`{file:...}` resolves against the working directory, not the config file.** Moving the
+> config into `.mcp-gateway/` does not move `{file:}` paths with it. The file's contents are
+> also used verbatim, so a trailing newline becomes part of the secret.
 
 ### Generating `GATEWAY_TOKEN_KEY`
 
@@ -200,7 +224,7 @@ discovery even when the server itself is fine.
 
 ## 6. Process lifecycle
 
-- **Reload.** Editing `gateway.json` reloads it; `SIGHUP` forces one. An invalid file keeps
+- **Reload.** Editing the resolved config file reloads it; `SIGHUP` forces one. An invalid file keeps
   the running configuration and logs the key path. Unchanged upstreams are not restarted,
   so a reload never forces a re-consent.
 - **Graceful shutdown.** On `SIGTERM` the gateway stops accepting, drains in-flight

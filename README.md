@@ -28,11 +28,31 @@ Documentation:
 
 ## Quick start
 
+### Install as a command
+
+```bash
+npm i -g @ahsansuryana/mcp-gateway
+mcp-gateway init                          # writes ~/.mcp-gateway/gateway.json
+$EDITOR ~/.mcp-gateway/gateway.json       # then edit it
+export GATEWAY_API_KEY='...'              # the example config uses {"env:GATEWAY_API_KEY"}
+mcp-gateway                               # serve is the default command
+```
+
+`mcp-gateway init --local` writes `./.mcp-gateway/gateway.json` instead, for a config that
+belongs to one project rather than to you.
+
+> If `npm i -g` fails with a permissions error, npm's global prefix is not writable by your
+> user. `npm config get prefix` tells you where it is; a version manager (nvm, volta, asdf)
+> or `npx @ahsansuryana/mcp-gateway` avoids the question.
+
+### From a clone
+
 ```bash
 npm ci
-cp gateway.example.json gateway.json     # then edit it
-export GATEWAY_API_KEY='...'             # or use {"env:GATEWAY_API_KEY"} in the file
-npm start                                # serve is the default command
+npm run build
+node dist/cli.js init --local
+export GATEWAY_API_KEY='...'
+npm start                                 # serve is the default command
 ```
 
 `serve` is the default, so `npm start`, `npm run dev`, `node dist/cli.js` and
@@ -46,18 +66,47 @@ curl -s -H "Authorization: Bearer $GATEWAY_API_KEY" \
      localhost:3000/status | jq
 ```
 
+### Where the config is looked for
+
+First hit wins:
+
+1. `-c <path>` / `--config <path>` — **authoritative**: used as given, and a missing file is an
+   error naming that path rather than a silent fallback to another config
+2. `$GATEWAY_CONFIG`
+3. `./.mcp-gateway/gateway.json`
+4. `$GATEWAY_HOME` (or your home directory) `/.mcp-gateway/gateway.json`
+5. `./gateway.json` — deprecated, still works, warns once
+
+`~` is never expanded: Node does not expand it, and a path starting with `~` would resolve
+under the working directory rather than your home.
+
+> **`{file:...}` in a config resolves against the WORKING DIRECTORY, not against the config
+> file.** Moving your config into `.mcp-gateway/` does not move `{file:}` paths with it. See
+> `docs/adr/0012-global-cli-and-config-dir.md`.
+
 ## With Docker
 
 ```bash
 cp docker-compose.example.yml docker-compose.yml
 printf 'GATEWAY_API_KEY=%s\nGATEWAY_TOKEN_KEY=%s\n' \
   "$(openssl rand -base64 24)" "$(openssl rand -base64 32)" > .env
-docker compose up --build
+
+docker compose run --rm gateway init     # writes the config INTO the volume
+docker compose up --build                # then start it
 ```
 
-`GATEWAY_TOKEN_KEY` is only needed when an upstream sets `oauth`. The compose file reads a
-named volume, never a host path, because the store must be owned by the non-root `node`
-user.
+The config lives in a **named volume** at `/home/node/.mcp-gateway/`, which is
+`$GATEWAY_HOME`. `init` must run before the first `up`, because the config is not in the
+image — it belongs to your installation, not to the build.
+
+There is deliberately **no host bind mount**: the Docker host here is a remote machine, so a
+local path cannot be mounted there at all, and a bind mount would hand the non-root `node`
+user whatever permissions the host directory happens to carry.
+
+`GATEWAY_TOKEN_KEY` is only needed when an upstream sets `oauth`. Back up the volume
+*together with* that key: the token store is useless without it, and it cannot be rotated.
+
+Full runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ## Upstream OAuth (gateway as client)
 
