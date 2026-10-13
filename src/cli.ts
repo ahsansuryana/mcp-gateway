@@ -236,7 +236,7 @@ export function runInitCommand(argv: readonly string[]): CliOutcome {
   }
   return {
     code: EXIT_OK,
-    stdout: `created ${result.path}\n` + 'edit it, then run: mcp-gateway\n',
+    stdout: `created ${result.path}\n` + 'edit it, then run: mcp-gate\n',
     stderr: '',
   };
 }

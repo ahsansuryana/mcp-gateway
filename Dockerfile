@@ -56,7 +56,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY gateway.schema.json ./
-# `mcp-gateway init` reads this from the package root at runtime. Without it the image can
+# `mcp-gate init` reads this from the package root at runtime. Without it the image can
 # start the gateway but cannot create a config, and the failure was a raw ENOENT stack trace.
 COPY gateway.example.json ./
 COPY scripts ./scripts
