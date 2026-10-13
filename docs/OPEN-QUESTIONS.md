@@ -475,6 +475,12 @@ Gateway", `bin: mcp-gateway`, owned by a third party.
 instruction to prefer the scoped name if the unscoped one is taken covers this, so it did not
 block. **Human check worth doing:** confirm the existing package is genuinely unrelated and
 not an earlier version of this project.
+**Resolved 2026-10-13 (Ahsan):** the bin is `mcp-gate`. Checked on the registry that day:
+`mcp-gateway` (third party, bin `mcp-gateway`), `mcpgate` (third party, stdio-to-http bridge,
+bin `mcpgate`) and `mcpgw` are all taken; `mcp-gw` and `mcp-gate` returned 404, and
+`mcp-gate` was chosen. The package stays `@ahsansuryana/mcp-gateway`. Bin names share one
+flat namespace per npm prefix, so this must be re-checked with `npm view mcp-gate`
+immediately before the first `npm publish`.
 
 ### Q-CLI-2 — `{file:}` is cwd-relative, but `parseConfig` documents otherwise
 **What:** `substitute.ts` resolves `{file:path}` against `process.cwd()`; the doc comment on

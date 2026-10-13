@@ -32,13 +32,13 @@ Documentation:
 
 ```bash
 npm i -g @ahsansuryana/mcp-gateway
-mcp-gateway init                          # writes ~/.mcp-gateway/gateway.json
+mcp-gate init                             # writes ~/.mcp-gateway/gateway.json
 $EDITOR ~/.mcp-gateway/gateway.json       # then edit it
 export GATEWAY_API_KEY='...'              # the example config uses {"env:GATEWAY_API_KEY"}
-mcp-gateway                               # serve is the default command
+mcp-gate                                  # serve is the default command
 ```
 
-`mcp-gateway init --local` writes `./.mcp-gateway/gateway.json` instead, for a config that
+`mcp-gate init --local` writes `./.mcp-gateway/gateway.json` instead, for a config that
 belongs to one project rather than to you.
 
 > If `npm i -g` fails with a permissions error, npm's global prefix is not writable by your
