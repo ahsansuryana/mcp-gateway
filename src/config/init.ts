@@ -1,4 +1,4 @@
-// ADR 0012: `mcp-gateway init` — write a starter config.
+// ADR 0012: `mcp-gate init` — write a starter config.
 //
 // Fails loudly rather than overwriting: an existing config may hold real credentials, and a
 // generated file that replaced it would be silent data loss.

@@ -38,13 +38,13 @@ export interface CliOutcome {
   serve?: boolean;
 }
 
-export const USAGE = `mcp-gateway — aggregated MCP gateway
+export const USAGE = `mcp-gate — aggregated MCP gateway
 
 Usage:
-  mcp-gateway serve [-c <path>]     run the gateway (default)
-  mcp-gateway init [--local]        create a starter config in .mcp-gateway/
-  mcp-gateway validate [-c <path>]   validate a gateway config and exit
-  mcp-gateway help                   show this message
+  mcp-gate serve [-c <path>]    run the gateway (default)
+  mcp-gate init [--local]       create a starter config in .mcp-gateway/
+  mcp-gate validate [-c <path>] validate a gateway config and exit
+  mcp-gate help                 show this message
 
 Options:
   -c, --config <path>   config file path
@@ -92,7 +92,7 @@ export function run(argv: readonly string[]): CliOutcome {
   if (command === 'init') return runInitCommand(rest);
   if (command === 'serve') return { code: EXIT_OK, stdout: '', stderr: '', serve: true };
   if (command !== 'validate') {
-    // A bare flag with no command word (`mcp-gateway -c ./gateway.json`) is the default
+    // A bare flag with no command word (`mcp-gate -c ./gateway.json`) is the default
     // serve with a config flag, not an unknown command. Without this, the moment `serve`
     // became the default the only way to pass a path was to also type `serve`, which is
     // exactly the redundancy the default exists to remove.
@@ -202,7 +202,7 @@ export function runValidate(argv: readonly string[]): CliOutcome {
 }
 
 /**
- * `mcp-gateway init [--local]`
+ * `mcp-gate init [--local]`
  *
  * Writes the shipped example config to `<GATEWAY_HOME or home>/.mcp-gateway/gateway.json`,
  * or to `./.mcp-gateway/gateway.json` with `--local`.
@@ -236,16 +236,16 @@ export function runInitCommand(argv: readonly string[]): CliOutcome {
   }
   return {
     code: EXIT_OK,
-    stdout: `created ${result.path}\n` + 'edit it, then run: mcp-gateway\n',
+    stdout: `created ${result.path}\n` + 'edit it, then run: mcp-gate\n',
     stderr: '',
   };
 }
 
-export const INIT_USAGE = `mcp-gateway init — create a starter config
+export const INIT_USAGE = `mcp-gate init — create a starter config
 
 Usage:
-  mcp-gateway init            write <GATEWAY_HOME or home>/.mcp-gateway/gateway.json
-  mcp-gateway init --local    write ./.mcp-gateway/gateway.json instead
+  mcp-gate init            write <GATEWAY_HOME or home>/.mcp-gateway/gateway.json
+  mcp-gate init --local    write ./.mcp-gateway/gateway.json instead
 
 Never overwrites an existing file. Written with mode 0600.
 `;
@@ -259,7 +259,7 @@ Never overwrites an existing file. Written with mode 0600.
 //
 // SYMLINKS MUST BE RESOLVED, OR THE GLOBAL INSTALL SILENTLY DOES NOTHING.
 //
-// npm installs `bin` as a symlink: /usr/local/bin/mcp-gateway -> ../lib/node_modules/…/cli.js.
+// npm installs `bin` as a symlink: /usr/local/bin/mcp-gate -> ../lib/node_modules/…/cli.js.
 // Node resolves symlinks when it loads the main module, so `import.meta.url` is the REAL
 // path while `process.argv[1]` stays the SYMLINK path. Comparing them directly made
 // `invokedDirectly` false, the entry point never ran, and the command exited 0 printing
@@ -267,7 +267,7 @@ Never overwrites an existing file. Written with mode 0600.
 //
 // Measured in node:24-bookworm-slim after `npm i -g ./pkg.tgz`:
 //   node /usr/local/lib/node_modules/…/dist/cli.js --version  -> @ahsansuryana/… 0.1.0
-//   /usr/local/bin/mcp-gateway --version                       -> (no output), rc=0
+//   /usr/local/bin/mcp-gate --version                     -> (no output), rc=0
 const invokedDirectly = ((): boolean => {
   const arg = process.argv[1];
   if (arg === undefined) return false;

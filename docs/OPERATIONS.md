@@ -98,7 +98,7 @@ First hit wins:
 5. `./gateway.json` — deprecated; still works and warns once, so no existing install breaks.
 
 If none exists, the gateway exits non-zero listing every path it checked and pointing at
-`mcp-gateway init`. There is no stack trace: it is a configuration mistake, not a crash.
+`mcp-gate init`. There is no stack trace: it is a configuration mistake, not a crash.
 
 The OAuth token store lives at `<config dir>/data/tokens.enc.json`, created 0700 with the
 file at 0600. If a store exists at the pre-`.mcp-gateway` location (`<config dir>/../data/…`)

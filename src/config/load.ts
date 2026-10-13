@@ -98,7 +98,7 @@ export function loadConfig(options: LoadOptions = {}): LoadedConfig {
         reason:
           'no gateway config found. Checked:\n' +
           located.checked.map((p) => `        - ${p}`).join('\n') +
-          `\n        Create one with: mcp-gateway init   (or --local for ${join(process.cwd(), CONFIG_DIR_NAME, CONFIG_FILENAME)})`,
+          `\n        Create one with: mcp-gate init   (or --local for ${join(process.cwd(), CONFIG_DIR_NAME, CONFIG_FILENAME)})`,
       },
     ]);
   }
