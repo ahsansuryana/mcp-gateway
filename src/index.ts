@@ -22,6 +22,7 @@ import { resolve } from 'node:path';
 import { ConfigReloader } from './server/reload.js';
 import { applyOverrides, type ServeFlags } from './serve-flags.js';
 import { checkAuthMode, resolveAuthMode } from './config/auth-mode.js';
+import { ensureConfig, type EnsureOptions, type EnsureResult } from './config/ensure.js';
 import { renderBanner } from './server/banner.js';
 
 export interface RunningGateway {
@@ -111,6 +112,13 @@ export interface StartOptions {
    */
   configCreated?: boolean;
   /**
+   * Set false to suppress auto-create. Tests that assert a clean "no config found" failure
+   * pass this; the production path never does.
+   */
+  autoCreate?: boolean;
+  /** Injection point for ensureConfig (homedir, exists, key generator), used by tests. */
+  ensureOptions?: EnsureOptions;
+  /**
    * ADR 0013: shown once in the banner when this run generated the key. Never logged, never
    * added to /status, never persisted outside the config file the key was written to.
    */
@@ -126,7 +134,24 @@ export interface StartOptions {
 }
 
 export async function startGateway(options: StartOptions = {}): Promise<RunningGateway> {
-  const loaded = loadConfig(options.configPath === undefined ? {} : { path: options.configPath });
+  // ADR 0013: with no config anywhere, `mcp-gateway` writes one instead of printing the five
+  // paths it checked and exiting.
+  //
+  // Only when `-c` was NOT given. An explicit path that does not exist is a mistake the
+  // operator made on this command line, and answering it by silently creating a file
+  // somewhere else would be worse than saying so.
+  //
+  // `validate` never reaches this: it calls loadConfig directly, so the command stays
+  // read-only.
+  const ensured = ensureStartingConfig(options);
+
+  // When a config was FOUND, the path is deliberately NOT passed through: re-resolving keeps
+  // the `source: 'legacy'` classification for a ./gateway.json file, and handing that path in
+  // as a flag would reclassify it as 'flag' and silently drop the deprecation warning.
+  const loaded =
+    ensured !== undefined && ensured.created
+      ? loadConfig({ path: ensured.path })
+      : loadConfig(options.configPath === undefined ? {} : { path: options.configPath });
   // Throws UsageError for a malformed --public-url, which the CLI turns into exit 2.
   const config =
     options.flags === undefined ? loaded.config : applyOverrides(loaded.config, options.flags);
@@ -155,6 +180,11 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
       ...(options.logLevel === undefined ? {} : { level: options.logLevel }),
     });
   logger.info({ config: path, ...configSummary(config) }, 'gateway starting');
+  if (ensured !== undefined && ensured.created) {
+    // Logged here rather than next to the write because the logger is built from the loaded
+    // config's secret list, which does not exist yet at write time.
+    logger.info({ config: ensured.path }, 'no config was found, so a starter one was written');
+  }
 
   // S5.4: `port` is assigned by `listen()` below, so the OAuth service reads it lazily.
   let port = config.gateway.port;
@@ -210,7 +240,10 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
       upstreamCount: Object.keys(config.mcp).length,
       protectedGateway: authMode.mode !== 'open',
       configPath: path,
-      configCreated: options.configCreated === true,
+      configCreated: ensured !== undefined && ensured.created,
+      // Printed once, to the owner, only when this run generated the key. A key that came
+      // from a config file is never echoed back: the operator already has it.
+      ...(ensured?.generatedKey === undefined ? {} : { generatedKey: ensured.generatedKey }),
     }),
   );
 
@@ -322,6 +355,30 @@ function createOAuthServiceIfConfigured(
   const store = new TokenStore({ path: storePath, key });
   logger.info({ tokenStore: store.path }, 'upstream OAuth configured; encrypted token store enabled');
   return new OAuthService({ config, store, logger, port });
+}
+
+/**
+ * ADR 0013: resolves the config to use, creating one if nothing exists.
+ *
+ * Returns undefined when auto-create does not apply, so the caller falls back to plain
+ * resolution. Throws ConfigErrorList when creation was attempted and failed, because that is
+ * a configuration problem and must not surface as a stack trace.
+ */
+function ensureStartingConfig(options: StartOptions): EnsureResult | undefined {
+  if (options.configPath !== undefined || options.autoCreate === false) return undefined;
+
+  const ensured = ensureConfig(options.ensureOptions ?? {});
+  if (ensured.status === 'failed') {
+    throw new ConfigErrorList([
+      {
+        path: '<file>',
+        reason:
+          `${ensured.reason ?? 'the config could not be created'}\n` +
+          `        Run:  mcp-gateway init   (or create ${ensured.path} by hand)`,
+      },
+    ]);
+  }
+  return ensured;
 }
 
 /**

@@ -234,13 +234,17 @@ export function renderBanner(input: BannerInput): string {
     }
   }
   if (input.generatedKey !== undefined) {
-    // Printed ONCE, to the owner, at the moment it is generated. It is never written to
+    // Printed ONCE, to the owner, at the moment it is generated. It is never added to
     // /status, never logged, and never shown again -- the same discipline every other secret
     // in this codebase follows.
+    //
+    // The wording says the key IS in the config file, because it is. An earlier draft said
+    // "not written to any file", which was false and would have left an operator believing
+    // the only copy lived in their scrollback.
     lines.push('');
     lines.push(`  API KEY    ${input.generatedKey}`);
-    lines.push('             Store it now. It is not written to any file and not shown again.');
-    lines.push('             Send it as:  Authorization: Bearer <key>');
+    lines.push('             Shown once. It is saved in the config file above, never logged,');
+    lines.push('             and never sent to /status. Send it as:  Authorization: Bearer <key>');
   }
   lines.push('');
   return lines.join('\n');

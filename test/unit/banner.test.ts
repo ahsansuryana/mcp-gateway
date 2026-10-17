@@ -308,11 +308,18 @@ describe('ADR 0013 renderBanner', () => {
     expect(renderBanner({ ...base, upstreamCount: 1 })).not.toContain('none yet');
   });
 
-  it('shows a generated key once, with instructions', () => {
+  it('shows a generated key once, and says something TRUE about where it lives', () => {
     const text = renderBanner({ ...base, generatedKey: 'GENERATED-KEY-VALUE' });
     expect(text).toContain('GENERATED-KEY-VALUE');
-    expect(text).toContain('not shown again');
+    expect(text).toContain('Shown once');
+    expect(text).toContain('saved in the config file');
+    expect(text).toContain('never logged');
     expect(text).toContain('Authorization: Bearer');
+    // The previous wording claimed the key was "not written to any file", which is false --
+    // it IS in the config file this run created. An operator who believed that would keep
+    // only their scrollback and lose the key on the next terminal scroll.
+    expect(text).not.toContain('not written to any file');
+    expect(text).not.toContain('Store it now');
   });
 
   it('omits the key section entirely when no key was generated', () => {
