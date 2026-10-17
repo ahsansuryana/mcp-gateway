@@ -65,7 +65,17 @@ See `gateway.example.json` for a working example.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `GATEWAY_CONFIG` | no | Path to the config file. Default `./gateway.json`. |
-| `GATEWAY_TOKEN_KEY` | **yes, when any upstream sets `oauth`** | Base64 32-byte AES-256-GCM key protecting the upstream token store. Generate with `openssl rand -base64 32`. |
+| `GATEWAY_CONFIG` | no | Path to the config file. Skipped when missing, not fatal. |
+| `GATEWAY_HOME` | no | Where `.mcp-gateway/` lives. Defaults to your home directory. The Docker image sets it to `/home/node`. |
+| `GATEWAY_TOKEN_KEY` | **yes, when any upstream sets `oauth`** | Base64 32-byte AES-256-GCM key protecting the upstream token store. Generate with `openssl rand -base64 32`. Cannot be rotated. |
 | `GATEWAY_TOKEN_STORE` | no | Overrides the token store path. Default `data/tokens.enc.json` beside the config file. |
+
+`GATEWAY_API_KEY` is referenced through `{env:GATEWAY_API_KEY}` in the `gateway.example.json`
+that `mcp-gate init` writes; it is not read by the gateway directly.
+
+## Runtime flags
+
+`serve` also accepts `--hostname`, `--port` and `--public-url`, which override the
+corresponding `gateway` fields for that process only and are never written back to the
+file. See `docs/OPERATIONS.md`.
 

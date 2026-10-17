@@ -80,11 +80,60 @@ Names only. **Never commit a value.**
 
 | Variable | Required | Notes |
 |---|---|---|
-| `GATEWAY_API_KEY` | yes | The inbound static bearer key. Referenced as `{env:GATEWAY_API_KEY}`. |
+| `GATEWAY_API_KEY` | no | Referenced as `{env:GATEWAY_API_KEY}`. A generated config embeds its key literally instead, so it is not required for the first-run path. |
 | `GATEWAY_TOKEN_KEY` | only when an upstream uses `oauth` | base64, exactly 32 bytes, AES-256-GCM |
 | `GATEWAY_CONFIG` | no | Path to the config file. See the search order below. |
 | `GATEWAY_HOME` | no | Where `.mcp-gateway/` lives. Defaults to your home directory. The image sets it to `/home/node`. |
 | `GATEWAY_TOKEN_STORE` | no | Overrides the token store path. |
+
+### Runtime flags
+
+`serve` accepts three overrides. They apply to **that process only** and are never written
+back to the config file — following the precedent `-c` already sets. That matters most for
+`--public-url`: persisting it would turn a tunnel's ephemeral URL into the installation's
+permanent identity, and the next run without the flag would advertise the wrong `aud`.
+
+| Flag | Overrides | Use |
+|---|---|---|
+| `--hostname <host>` | `gateway.host` | `--hostname 0.0.0.0` to reach the gateway from other devices on the network. |
+| `--port <port>` | `gateway.port` | Run two gateways side by side. `--port 0` is **rejected**: it means "any free port", and the caller cannot learn which one was taken, so every URL printed would be uncallable. |
+| `--public-url <url>` | `gateway.publicUrl` | Behind a tunnel. Must be an absolute `http:`/`https:` URL. |
+
+Applied **before** the HTTP app is built, because the Origin allowlist, the RFC 9728 audience
+and the CIMD `client_id` are all derived from `config.gateway.publicUrl` at that moment.
+
+> **Flag overrides are not re-applied on reload.** `ConfigReloader` reloads upstreams only, so
+> changing `gateway.publicUrl` in the file while running with `--public-url` has no effect on
+> this process. Restart it.
+
+### What `publicUrl` actually does — and what it does not
+
+It is **not** a CORS setting, and the distinction is worth being precise about:
+
+- The gateway sends **no** `Access-Control-*` header, in any mode. CORS does not apply,
+  because Claude Desktop, Claude Code and claude.ai are not browsers and send no `Origin`
+  header. What looks like CORS is the SDK's `originValidation`, which is DNS-rebinding
+  protection: it **rejects** with `403` and never grants, and an absent `Origin` passes.
+- `publicUrl` is the gateway's canonical **identity**, read in five places, four of which are
+  security-relevant:
+
+| Consumed by | Where |
+|---|---|
+| Origin allowlist (browser clients only) | `src/server/http.ts`, `resolveAllowedOrigins` |
+| `authOAuth.audience` default = `publicUrl` + `/mcp` | `src/server/http.ts` |
+| RFC 9728 protected-resource metadata `resource` | `src/server/http.ts` |
+| CIMD `client_id` and `client_uri` | `src/auth/oauth-client/service.ts` |
+| Upstream OAuth callback redirect URI | `src/auth/oauth-client/service.ts` |
+
+Without it, a Claude connector cannot be added at all: there is no metadata to discover and
+no audience to validate against.
+
+> **Ephemeral tunnels.** An ngrok or quick cloudflared URL changes on every restart, and
+> `publicUrl` becomes the token `aud`. A stale value fails as `audience mismatch`, which does
+> not point anywhere near the cause. Use a named tunnel with your own domain (set once, never
+> changes), or pass `--public-url` on every run. The gateway does not try to discover the
+> active tunnel URL: that would be a guess, and a wrong guess here fails as a confusing error
+> rather than an obvious one.
 
 ### Where the config file is
 
@@ -97,8 +146,13 @@ First hit wins:
 4. `$GATEWAY_HOME` (else your home directory) `/.mcp-gateway/gateway.json`
 5. `./gateway.json` — deprecated; still works and warns once, so no existing install breaks.
 
-If none exists, the gateway exits non-zero listing every path it checked and pointing at
-`mcp-gate init`. There is no stack trace: it is a configuration mistake, not a crash.
+If none exists, **only `serve`** creates level 4: a minimal valid config with a generated
+32-byte base64url key, written 0600 inside a 0700 directory, host `127.0.0.1`. `validate` stays
+read-only, and `-c <missing>` is an error rather than an excuse to write a file elsewhere.
+
+Auto-create writes to the **home** directory only, never to the working directory — it will
+not drop a file into whatever project you happened to run the command from. Use
+`init --local` for that.
 
 The OAuth token store lives at `<config dir>/data/tokens.enc.json`, created 0700 with the
 file at 0600. If a store exists at the pre-`.mcp-gateway` location (`<config dir>/../data/…`)

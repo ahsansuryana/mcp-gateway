@@ -32,31 +32,76 @@ Documentation:
 
 ```bash
 npm i -g @ahsansuryana/mcp-gateway
-mcp-gate init                             # writes ~/.mcp-gateway/gateway.json
-$EDITOR ~/.mcp-gateway/gateway.json       # then edit it
-export GATEWAY_API_KEY='...'              # the example config uses {"env:GATEWAY_API_KEY"}
-mcp-gate                                  # serve is the default command
+mcp-gate
 ```
 
-`mcp-gate init --local` writes `./.mcp-gateway/gateway.json` instead, for a config that
-belongs to one project rather than to you.
+That is the whole quick start. There is no config to write first: if none exists anywhere,
+`mcp-gate` writes a starter one to `<home>/.mcp-gateway/gateway.json`, generates an inbound
+API key, and prints both:
+
+```
+  >  Local  :  http://127.0.0.1:3000/mcp
+
+  config     /home/you/.mcp-gateway/gateway.json  (just created)
+  upstreams  0  (none yet — add one under "mcp")
+  auth       bearer
+
+  API KEY    QdeAL5w8U-laDLVJ4R16p-ChpQEB8G6hjPSUZlIxOcY
+             Shown once. It is saved in the config file above, never logged,
+             and never sent to /status. Send it as:  Authorization: Bearer <key>
+```
+
+Edit the config, add upstreams under `mcp`, and it reloads on save. The generated host is
+`127.0.0.1`; `--hostname 0.0.0.0` widens it to the network.
 
 > If `npm i -g` fails with a permissions error, npm's global prefix is not writable by your
 > user. `npm config get prefix` tells you where it is; a version manager (nvm, volta, asdf)
 > or `npx @ahsansuryana/mcp-gateway` avoids the question.
+
+### Reaching it from another device, and from the internet
+
+```bash
+mcp-gate --hostname 0.0.0.0                          # other devices on your LAN
+mcp-gate --public-url https://gw.example.com         # behind a tunnel
+```
+
+Both override the config **for that run only** and are never written back to the file.
+
+`--public-url` is not a CORS setting. It is the gateway's canonical identity, and four
+things are derived from it: the RFC 9728 protected-resource metadata that Claude reads, the
+token `aud` it validates, the Client ID Metadata Document, and the upstream OAuth callback.
+With no `publicUrl` those do not exist and a Claude connector cannot be added at all. No
+`Access-Control-*` header is ever sent — CORS does not apply here, because Claude Desktop,
+Claude Code and claude.ai are not browsers and send no `Origin` header.
+
+> **Ephemeral tunnels change their URL on every restart, and `publicUrl` becomes `aud`.** A
+> stale value fails as `audience mismatch`, which does not point at the cause. Use a named
+> tunnel with your own domain, or pass `--public-url` each time.
+
+### Starting without an inbound key
+
+`gateway.auth.keys` may be empty, which makes `POST /mcp` accept any caller. That is allowed
+**only** on a loopback bind; `--hostname 0.0.0.0` with no key is refused at startup, before
+the port is bound, naming both the key path and the flag that fixes it. Whenever it is
+allowed, the banner and `/status` both say so.
+
+### `init`, if you want to write the config yourself
+
+```bash
+mcp-gate init            # <home>/.mcp-gateway/gateway.json, the same starter file
+mcp-gate init --local    # ./.mcp-gateway/gateway.json, for one project
+```
+
+`init` never overwrites an existing file. It is no longer required — it exists for `--local`
+and for creating the file before the first run.
 
 ### From a clone
 
 ```bash
 npm ci
 npm run build
-node dist/cli.js init --local
-export GATEWAY_API_KEY='...'
-npm start                                 # serve is the default command
+node dist/cli.js                 # same behaviour as the global command
 ```
-
-`serve` is the default, so `npm start`, `npm run dev`, `node dist/cli.js` and
-`node dist/cli.js -c ./gateway.json` all start the gateway. `npm start -- -c <path>` works too.
 
 Check it:
 
@@ -76,6 +121,9 @@ First hit wins:
 3. `./.mcp-gateway/gateway.json`
 4. `$GATEWAY_HOME` (or your home directory) `/.mcp-gateway/gateway.json`
 5. `./gateway.json` — deprecated, still works, warns once
+
+With nothing found, **only `serve`** writes level 4 and starts. `validate` stays read-only,
+and `-c <missing>` is an error rather than an excuse to create a file elsewhere.
 
 `~` is never expanded: Node does not expand it, and a path starting with `~` would resolve
 under the working directory rather than your home.

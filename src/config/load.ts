@@ -178,7 +178,7 @@ export function parseConfig(raw: string, sourcePath: string, options: Substitute
   }
 
   // ADR 0013: an unauthenticated /mcp is allowed, but only on a loopback bind. Checked HERE
-  // as well as in startGateway: this is what makes `mcp-gateway validate` report the problem
+  // as well as in startGateway: this is what makes `mcp-gate validate` report the problem
   // for a config file, and startGateway's own check is what catches a `--hostname` that
   // turns a safe config into an unsafe one.
   const authProblem = checkAuthMode(result.data);

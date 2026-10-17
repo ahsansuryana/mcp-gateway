@@ -61,9 +61,23 @@ function renderConfigDoc(doc: Record<string, unknown>): string {
   lines.push('');
   lines.push('| Variable | Required | Purpose |');
   lines.push('|---|---|---|');
-  lines.push('| `GATEWAY_CONFIG` | no | Path to the config file. Default `./gateway.json`. |');
-  lines.push('| `GATEWAY_TOKEN_KEY` | **yes, when any upstream sets `oauth`** | Base64 32-byte AES-256-GCM key protecting the upstream token store. Generate with `openssl rand -base64 32`. |');
+  // ADR 0012 moved the default off ./gateway.json and added GATEWAY_HOME; ADR 0013 left this
+  // list stale, claiming a default the resolver has not used for two sprints and omitting a
+  // variable the Docker image sets. Kept here rather than hand-edited so regenerating cannot
+  // put the old text back.
+  lines.push('| `GATEWAY_CONFIG` | no | Path to the config file. Skipped when missing, not fatal. |');
+  lines.push('| `GATEWAY_HOME` | no | Where `.mcp-gateway/` lives. Defaults to your home directory. The Docker image sets it to `/home/node`. |');
+  lines.push('| `GATEWAY_TOKEN_KEY` | **yes, when any upstream sets `oauth`** | Base64 32-byte AES-256-GCM key protecting the upstream token store. Generate with `openssl rand -base64 32`. Cannot be rotated. |');
   lines.push('| `GATEWAY_TOKEN_STORE` | no | Overrides the token store path. Default `data/tokens.enc.json` beside the config file. |');
+  lines.push('');
+  lines.push('`GATEWAY_API_KEY` is referenced through `{env:GATEWAY_API_KEY}` in the `gateway.example.json`');
+  lines.push('that `mcp-gate init` writes; it is not read by the gateway directly.');
+  lines.push('');
+  lines.push('## Runtime flags');
+  lines.push('');
+  lines.push('`serve` also accepts `--hostname`, `--port` and `--public-url`, which override the');
+  lines.push('corresponding `gateway` fields for that process only and are never written back to the');
+  lines.push('file. See `docs/OPERATIONS.md`.');
   lines.push('');
   return `${lines.join('\n')}\n`;
 }
