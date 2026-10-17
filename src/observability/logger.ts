@@ -114,7 +114,23 @@ export function createLogger(options: LoggerOptionsExtra = {}): Logger {
       : {}),
   };
 
-  const stream = options.destination ?? process.stdout;
+  /**
+   * The default destination is **stderr**, not stdout.
+   *
+   * stdout is reserved for the human-facing startup banner (ADR 0013): the list of URLs a
+   * client can connect to. Two different audiences with two different formats cannot share
+   * one stream without corrupting both -- JSON log lines interleaved into the banner make
+   * it unreadable, and the banner interleaved into the logs makes `| jq` fail.
+   *
+   * Verified before changing: `grep -rn "Access-Control" src/` finds nothing, and the
+   * gateway sent no `Access-Control-*` header at all, so nothing that used stdout as a
+   * CORS-relevant channel is affected. `scripts/smoke.sh` reads no stdout from the
+   * gateway (it curls endpoints), and the CI smoke job greps `docker logs`, which
+   * captures both streams.
+   *
+   * Callers that pass an explicit `destination` (tests) are unaffected.
+   */
+  const stream = options.destination ?? process.stderr;
   return pino(pinoOptions, stream);
 }
 
