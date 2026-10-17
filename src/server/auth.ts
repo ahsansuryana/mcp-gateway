@@ -90,4 +90,35 @@ export function unauthorizedResponse(): Response {
   );
 }
 
+/**
+ * The verifier used when the gateway is deliberately unauthenticated (ADR 0013, loopback
+ * binds only -- `checkAuthMode` in src/config/auth-mode.ts refuses anything else).
+ *
+ * It still parses the header rather than waving every request through. A caller who sends
+ * `Authorization: nonsense` has made a mistake worth seeing, and answering 200 to a
+ * malformed header makes "send anything at all" a path that works. The shape check is the
+ * only thing standing between an open gateway and a client that believes it is
+ * authenticating when it is not.
+ *
+ * `keyIndex` is -1 because there is no key: the rate limiter buckets on
+ * `static:${sha256(key)}` for real keys, and must not collide with one.
+ */
+export function alwaysAuthorized(): BearerAuth {
+  return {
+    authorize(headerValue: string | undefined): AuthResult {
+      if (headerValue === undefined || headerValue.length === 0) return { ok: true, keyIndex: -1 };
+      const separator = headerValue.indexOf(' ');
+      if (separator < 0) return { ok: false, reason: 'malformed' };
+      const scheme = headerValue.slice(0, separator);
+      if (scheme.toLowerCase() !== 'bearer') return { ok: false, reason: 'malformed' };
+      const presented = headerValue.slice(separator + 1).trim();
+      if (presented.length === 0) return { ok: false, reason: 'malformed' };
+      // A well-formed bearer header is accepted, but the value is discarded: there is no
+      // configured key to compare it against, and comparing against nothing is what would
+      // look like verification without being it.
+      return { ok: true, keyIndex: -1 };
+    },
+  };
+}
+
 export const DIGEST_LENGTH = DIGEST_BYTES;

@@ -383,8 +383,18 @@ describe('Sprint 6 security review: no token, JWKS or key material leaks', () =>
     );
   }, 30_000);
 
-  it('a config with neither a static key nor authOAuth is rejected', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mcp-gateway-s63-open-'));
+  // ADR 0013 INVERTED THIS TEST, rather than deleting it. It used to assert that a config
+  // with neither a static key nor authOAuth is rejected outright. The human decision was to
+  // allow an unauthenticated gateway and warn loudly -- so the rule moved from "always
+  // reject" to "reject unless the bind is loopback". Deleting the assertion would have lost
+  // the record that the posture changed on purpose; inverting it keeps it.
+  //
+  // The old assertion is worth restating because the reason it is now conditional is not
+  // obvious from the new code: createBearerAuth([]) is DENY-ALL, not open. An empty key list
+  // alone would have produced a gateway that 401s everything and looks broken rather than
+  // dangerous, so `open` is a named state and not an inferred one.
+  it('accepts a keyless config on a loopback bind and reports it as open', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-gateway-open-'));
     const configPath = join(dir, 'gateway.json');
     writeFileSync(
       configPath,
@@ -400,8 +410,71 @@ describe('Sprint 6 security review: no token, JWKS or key material leaks', () =>
       }),
       'utf8',
     );
-    await expect(startGateway({ configPath, logLevel: 'silent' })).rejects.toThrow(
-      /at least one inbound credential/,
+
+    const open = await startGateway({ configPath, logLevel: 'silent' });
+    try {
+      // /status is the discoverable answer to "is this gateway open?" long after the banner
+      // has scrolled away, and it is authenticated in every OTHER mode -- so this response
+      // is itself proof that /mcp and /status stopped requiring a credential.
+      const response = await fetch(`http://127.0.0.1:${open.port}/status`);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { gateway: Record<string, unknown> };
+      expect(body.gateway['authMode']).toBe('open');
+      expect(body.gateway['inboundAuthKeys']).toBe(0);
+      expect(String(body.gateway['authWarning'])).toContain('accepts any caller');
+    } finally {
+      await open.stop();
+    }
+  }, 30_000);
+
+  it('REFUSES a keyless config on any non-loopback bind', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-gateway-open-wild-'));
+    const configPath = join(dir, 'gateway.json');
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        gateway: {
+          host: '0.0.0.0',
+          port: await unusedPort(),
+          auth: { type: 'bearer', keys: [] },
+          defaultTimeoutMs: 5_000,
+          defaultTtlMs: 30_000,
+        },
+        mcp: {},
+      }),
+      'utf8',
     );
+    // The message names the key path AND the flag that fixes it, because a message that only
+    // said "invalid" sends the operator to the schema instead of to their own config.
+    await expect(startGateway({ configPath, logLevel: 'silent' })).rejects.toThrow(
+      /gateway\.auth\.keys[\s\S]*0\.0\.0\.0[\s\S]*--hostname 127\.0\.0\.1/,
+    );
+  }, 30_000);
+
+  it('REFUSES a keyless config promoted to 0.0.0.0 BY A FLAG, not just in the file', async () => {
+    // The second half of ADR 0013's supervisor. loadConfig validated the FILE, and it ran
+    // before --hostname was applied -- so without the re-check in startGateway this case
+    // would pass validation and then listen on the LAN with POST /mcp open. That is the
+    // whole reason the rule is a function called twice instead of a superRefine.
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-gateway-open-flag-'));
+    const configPath = join(dir, 'gateway.json');
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        gateway: {
+          host: '127.0.0.1', // safe on its own
+          port: await unusedPort(),
+          auth: { type: 'bearer', keys: [] },
+          defaultTimeoutMs: 5_000,
+          defaultTtlMs: 30_000,
+        },
+        mcp: {},
+      }),
+      'utf8',
+    );
+
+    await expect(
+      startGateway({ configPath, logLevel: 'silent', flags: { hostname: '0.0.0.0' } }),
+    ).rejects.toThrow(/0\.0\.0\.0/);
   }, 30_000);
 });

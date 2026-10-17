@@ -24,7 +24,7 @@ v2 pinned exactly.
 | **Inbound OAuth** | RFC 9728 protected-resource metadata, `WWW-Authenticate` challenge, JWT validation via `jose` against a discovered JWKS |
 | **Subscriptions** | `subscriptions/listen` fan-out with D17 debounce and truthful `listChanged` advertisement |
 | **Operations** | Hot reload + `SIGHUP`, rate limiting, graceful shutdown, Dockerfile, compose, smoke test |
-| **Distribution** | Installable as a global command (`@ahsansuryana/mcp-gateway`, bin `mcp-gateway`), config in `.mcp-gateway/`, `mcp-gateway init` |
+| **Distribution** | Installable as a global command (`@ahsansuryana/mcp-gateway`, bin `mcp-gateway`), config in `.mcp-gateway/`, **zero-config first run** (ADR 0013: `serve` writes a starter config with a generated key and prints the URLs), `--hostname`/`--port`/`--public-url` runtime overrides, optional inbound key on loopback binds only |
 | **Docs** | Config reference (generated), security, operations, manual tests, ADRs, per-sprint reports |
 
 ## 2. What is verified, and where
