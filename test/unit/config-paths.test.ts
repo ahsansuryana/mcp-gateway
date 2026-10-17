@@ -150,7 +150,7 @@ describe('ADR 0012 token store placement', () => {
   });
 });
 
-describe('ADR 0012 mcp-gate init', () => {
+describe('ADR 0012 mcp-gateway init', () => {
   let root: string;
 
   beforeEach(() => {

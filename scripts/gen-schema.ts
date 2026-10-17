@@ -71,7 +71,7 @@ function renderConfigDoc(doc: Record<string, unknown>): string {
   lines.push('| `GATEWAY_TOKEN_STORE` | no | Overrides the token store path. Default `data/tokens.enc.json` beside the config file. |');
   lines.push('');
   lines.push('`GATEWAY_API_KEY` is referenced through `{env:GATEWAY_API_KEY}` in the `gateway.example.json`');
-  lines.push('that `mcp-gate init` writes; it is not read by the gateway directly.');
+  lines.push('that `mcp-gateway init` writes; it is not read by the gateway directly.');
   lines.push('');
   lines.push('## Runtime flags');
   lines.push('');

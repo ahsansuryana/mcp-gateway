@@ -79,7 +79,7 @@ function stringSpec(label: string): FlagSpec {
 
 /**
  * Command words `run()` accepts. A leading one is skipped rather than reported as an
- * unknown option: `mcp-gate serve --port 3001` and `mcp-gate --port 3001` are the
+ * unknown option: `mcp-gateway serve --port 3001` and `mcp-gateway --port 3001` are the
  * same command, and the CLI documents `serve` as spell-out-able.
  *
  * Only `serve` can actually reach here -- `run()` returns `serve !== true` for the others --

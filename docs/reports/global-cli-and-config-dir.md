@@ -5,10 +5,9 @@
 `.mcp-gateway` directory. `docs/adr/0012-global-cli-and-config-dir.md` holds the decisions;
 this file records what was run and what is still unproven.
 
-> **The command in the transcripts below is `mcp-gateway`.** That is what it was called when
-> this ran. It was renamed to **`mcp-gate`** the next day (PR #2) because `mcp-gateway`,
-> `mcpgate` and `mcpgw` are all taken on npm. The package is still
-> `@ahsansuryana/mcp-gateway`; only the command name changed. The transcripts are left as
+> **The command in the transcripts below is `mcp-gateway`.** It was renamed to `mcp-gate`
+> the next day (PR #2), then renamed **back** to `mcp-gateway` (Q-CLI-1, re-resolved
+> 2026-10-17) so the command matches the package you install. The transcripts are left as
 > they were recorded rather than rewritten, because editing them would make this a false
 > record of what the tool printed.
 

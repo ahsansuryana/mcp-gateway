@@ -32,11 +32,11 @@ Documentation:
 
 ```bash
 npm i -g @ahsansuryana/mcp-gateway
-mcp-gate
+mcp-gateway
 ```
 
 That is the whole quick start. There is no config to write first: if none exists anywhere,
-`mcp-gate` writes a starter one to `<home>/.mcp-gateway/gateway.json`, generates an inbound
+`mcp-gateway` writes a starter one to `<home>/.mcp-gateway/gateway.json`, generates an inbound
 API key, and prints both:
 
 ```
@@ -58,11 +58,19 @@ Edit the config, add upstreams under `mcp`, and it reloads on save. The generate
 > user. `npm config get prefix` tells you where it is; a version manager (nvm, volta, asdf)
 > or `npx @ahsansuryana/mcp-gateway` avoids the question.
 
+> **The command shares its name with a third-party npm package.** `mcp-gateway@1.0.0`
+> (maintainer `snaggle`) also declares a `mcp-gateway` bin, and bin names share one flat
+> namespace per npm prefix. Installing both globally means whichever was installed **last**
+> owns the `mcp-gateway` executable. The *packages* do not conflict — `@ahsansuryana/mcp-gateway`
+> is a different name and installs fine on its own. If `mcp-gateway` turns out to be the other
+> package, run `npm ls -g --depth=0 | grep mcp-gateway` to see which one owns it. See
+> `docs/OPEN-QUESTIONS.md` Q-CLI-1.
+
 ### Reaching it from another device, and from the internet
 
 ```bash
-mcp-gate --hostname 0.0.0.0                          # other devices on your LAN
-mcp-gate --public-url https://gw.example.com         # behind a tunnel
+mcp-gateway --hostname 0.0.0.0                          # other devices on your LAN
+mcp-gateway --public-url https://gw.example.com         # behind a tunnel
 ```
 
 Both override the config **for that run only** and are never written back to the file.
@@ -88,8 +96,8 @@ allowed, the banner and `/status` both say so.
 ### `init`, if you want to write the config yourself
 
 ```bash
-mcp-gate init            # <home>/.mcp-gateway/gateway.json, the same starter file
-mcp-gate init --local    # ./.mcp-gateway/gateway.json, for one project
+mcp-gateway init            # <home>/.mcp-gateway/gateway.json, the same starter file
+mcp-gateway init --local    # ./.mcp-gateway/gateway.json, for one project
 ```
 
 `init` never overwrites an existing file. It is no longer required — it exists for `--local`

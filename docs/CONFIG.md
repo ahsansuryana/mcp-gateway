@@ -71,7 +71,7 @@ See `gateway.example.json` for a working example.
 | `GATEWAY_TOKEN_STORE` | no | Overrides the token store path. Default `data/tokens.enc.json` beside the config file. |
 
 `GATEWAY_API_KEY` is referenced through `{env:GATEWAY_API_KEY}` in the `gateway.example.json`
-that `mcp-gate init` writes; it is not read by the gateway directly.
+that `mcp-gateway init` writes; it is not read by the gateway directly.
 
 ## Runtime flags
 
