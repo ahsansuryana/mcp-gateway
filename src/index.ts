@@ -21,6 +21,7 @@ import { TokenStore, loadTokenKey } from './auth/oauth-client/token-store.js';
 import { resolve } from 'node:path';
 import { ConfigReloader } from './server/reload.js';
 import { applyOverrides, type ServeFlags } from './serve-flags.js';
+import { renderBanner } from './server/banner.js';
 
 export interface RunningGateway {
   server: Server;
@@ -103,6 +104,17 @@ export interface StartOptions {
    */
   tokenStorePath?: string;
   /**
+   * ADR 0013: set when this run CREATED the config, so the banner can say so. Carried as a
+   * separate field rather than inferred from whether a key was generated, because those are
+   * two different facts and either can be true without the other.
+   */
+  configCreated?: boolean;
+  /**
+   * ADR 0013: shown once in the banner when this run generated the key. Never logged, never
+   * added to /status, never persisted outside the config file the key was written to.
+   */
+  generatedKey?: string;
+  /**
    * ADR 0013: `--hostname` / `--port` / `--public-url`. Applied to the parsed config
    * BEFORE the HTTP app is built, because the Origin allowlist, the RFC 9728 audience and
    * the CIMD client_id are all derived from the config at build time. Applied afterwards
@@ -169,6 +181,28 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
     logger.warn({ reason: err instanceof Error ? err.message : String(err) }, 'subscriptions fan-out did not start');
   });
   logger.info({ port, upstreams: manager.reports() }, 'gateway listening');
+
+  // ADR 0013: the banner goes to STDOUT and the logs to stderr, so the two cannot corrupt
+  // each other. Printed after `listen` and after `manager.start()`, so every URL in it is one
+  // that is actually answering. It is built from `server.address()` rather than
+  // `config.gateway.port`: the configured port is what was ASKED for, the bound port is what
+  // is LISTENING, and they differ whenever the listener took a fallback -- a banner that
+  // disagrees with the listener is worse than no banner at all.
+  //
+  // `protectedGateway` is hard-coded true here and stops being so in the auth commit, which
+  // is where the open-mode decision lands. Wiring the call site now keeps this commit to the
+  // banner itself.
+  process.stdout.write(
+    renderBanner({
+      host: config.gateway.host,
+      port,
+      ...(config.gateway.publicUrl === undefined ? {} : { publicUrl: config.gateway.publicUrl }),
+      upstreamCount: Object.keys(config.mcp).length,
+      protectedGateway: true,
+      configPath: path,
+      configCreated: options.configCreated === true,
+    }),
+  );
 
   // S7.1: watch the config file and honour SIGHUP. An invalid new file keeps the running
   // configuration; the reload is applied through the manager so unchanged upstreams, and
