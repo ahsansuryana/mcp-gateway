@@ -1,4 +1,4 @@
-// ADR 0012: `mcp-gate init` — write a starter config.
+// ADR 0012: `mcp-gateway init` — write a starter config.
 //
 // Fails loudly rather than overwriting: an existing config may hold real credentials, and a
 // generated file that replaced it would be silent data loss.
@@ -137,7 +137,7 @@ export function runInit(options: InitOptions = {}): InitResult {
 }
 
 /**
- * The minimal config `mcp-gate serve` writes when it finds no config anywhere (ADR 0013).
+ * The minimal config `mcp-gateway serve` writes when it finds no config anywhere (ADR 0013).
  *
  * Deliberately NOT `gateway.example.json`. That file references `{env:GITHUB_TOKEN}`,
  * `{env:FOO}` and two upstreams that do not exist yet, so writing it on first run produces a
@@ -154,7 +154,7 @@ export function runInit(options: InitOptions = {}): InitResult {
  */
 export function renderTemplate(host: string, key: string): string {
   return `{
-  // Created by \`mcp-gate serve\` on first run. Safe to edit; it is never overwritten.
+  // Created by \`mcp-gateway serve\` on first run. Safe to edit; it is never overwritten.
 
   "gateway": {
     // Loopback by default. Use \`mcp-gateway --hostname 0.0.0.0\` to reach it from other

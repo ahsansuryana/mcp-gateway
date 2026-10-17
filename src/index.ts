@@ -374,7 +374,7 @@ function ensureStartingConfig(options: StartOptions): EnsureResult | undefined {
         path: '<file>',
         reason:
           `${ensured.reason ?? 'the config could not be created'}\n` +
-          `        Run:  mcp-gate init   (or create ${ensured.path} by hand)`,
+          `        Run:  mcp-gateway init   (or create ${ensured.path} by hand)`,
       },
     ]);
   }

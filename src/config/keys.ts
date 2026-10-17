@@ -23,7 +23,7 @@ export const API_KEY_BYTES = 32;
  *
  * The key is returned to the caller and nowhere else. It is never logged, never added to
  * /status, and never included in an error message (PLAN.md rule 9). The only place it is
- * written is the config file `mcp-gate init` or the auto-create path creates, with mode
+ * written is the config file `mcp-gateway init` or the auto-create path creates, with mode
  * 0600 inside a 0700 directory.
  */
 export function generateApiKey(bytes: number = API_KEY_BYTES): string {

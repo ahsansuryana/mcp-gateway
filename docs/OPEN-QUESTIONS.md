@@ -482,6 +482,34 @@ bin `mcpgate`) and `mcpgw` are all taken; `mcp-gw` and `mcp-gate` returned 404, 
 flat namespace per npm prefix, so this must be re-checked with `npm view mcp-gate`
 immediately before the first `npm publish`.
 
+**Re-resolved 2026-10-17 (Ahsan):** the bin is **`mcp-gateway`** again, matching the package
+name it comes from. Verified against the registry that day:
+
+```
+npm view mcp-gateway                -> 1.0.0, "Model Context Protocol Gateway",
+                                       bin { 'mcp-gateway': 'dist/src/mcp-gateway.js' },
+                                       maintainer snaggle <info@snaggle.ai>   (third party)
+npm view mcp-gate                   -> 404
+npm view @ahsansuryana/mcp-gateway  -> 404  (not published yet)
+```
+
+**The cost, stated plainly so it is not rediscovered as a bug.** The two packages now want
+the same command name, and bin names share one flat namespace per npm prefix. If a machine
+has both installed globally, whichever was installed **last** owns the `mcp-gateway`
+executable and the other becomes unrunnable by name. That is not hypothetical: `snaggle`'s
+package declares exactly that bin.
+
+It is accepted anyway, for a reason worth recording: a command name that differs from the
+package you installed is a mismatch every user has to learn, and the whole point of ADR
+0013 is that `npm i -g @ahsansuryana/mcp-gateway` should be followed by `mcp-gateway`. The
+scope is small — `@ahsansuryana/mcp-gateway` is a different **package** name and installs
+without conflict; only the shared executable name collides.
+
+If a collision turns out to matter in practice, the options are unchanged and already known:
+keep both names and document the clash, or ship a second bin alias. Re-run the three
+`npm view` commands above immediately before `npm publish` — the registry can change in
+either direction.
+
 ### Q-CLI-2 — `{file:}` is cwd-relative, but `parseConfig` documents otherwise
 **What:** `substitute.ts` resolves `{file:path}` against `process.cwd()`; the doc comment on
 `parseConfig` claims `sourcePath` is used "to resolve relative `{file:...}` paths". The

@@ -153,7 +153,7 @@ First hit wins, and **each candidate is tested for existence**:
 `init` rather than silently producing a strange directory.
 
 When nothing is found: exit `2`, no stack trace, and the message lists **every path that was
-checked** and mentions `mcp-gate init`.
+checked** and mentions `mcp-gateway init`.
 
 ### D3 — state lives beside the config, with a migration warning
 

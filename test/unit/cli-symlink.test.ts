@@ -15,7 +15,7 @@ const cliSource = path.join(repoRoot, 'src', 'cli.ts');
  * neither. Without this the suite is red on most Windows machines -- measured here on
  * `origin/main` with none of the zero-config work present:
  *
- *   EPERM: operation not permitted, symlink ...\src\cli.ts -> ...\mcp-gate
+ *   EPERM: operation not permitted, symlink ...\src\cli.ts -> ...\mcp-gateway
  *
  * The probe actually attempts the operation rather than testing `process.platform`, because
  * a Windows box WITH Developer Mode does allow it and should still run the real assertion.
@@ -49,7 +49,7 @@ describe('cli entry point invoked through a symlink', () => {
     () => {
       const dir = mkdtempSync(path.join(tmpdir(), 'mcp-gate-symlink-'));
       try {
-        const link = path.join(dir, 'mcp-gate');
+        const link = path.join(dir, 'mcp-gateway');
         symlinkSync(cliSource, link);
 
         const direct = spawnSync(process.execPath, ['--import', 'tsx', cliSource, '--version'], {
