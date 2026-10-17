@@ -17,6 +17,7 @@ import { pathToFileURL } from 'node:url';
 import { main } from './index.js';
 
 import { runInit } from './config/init.js';
+import { parseServeFlags, UsageError } from './serve-flags.js';
 import { packageName, packageVersion } from './package-info.js';
 import { CONFIG_PATH_ENV_VAR,
   ConfigErrorList,
@@ -41,22 +42,35 @@ export interface CliOutcome {
 export const USAGE = `mcp-gate — aggregated MCP gateway
 
 Usage:
-  mcp-gate serve [-c <path>]    run the gateway (default)
-  mcp-gate init [--local]       create a starter config in .mcp-gateway/
-  mcp-gate validate [-c <path>] validate a gateway config and exit
-  mcp-gate help                 show this message
+  mcp-gate [options]                 run the gateway (default)
+  mcp-gate serve [options]           same thing, spelled out
+  mcp-gate init [--local]            create a starter config in .mcp-gateway/
+  mcp-gate validate [-c <path>]      validate a gateway config and exit
+  mcp-gate help                      show this message
 
 Options:
-  -c, --config <path>   config file path
-                        (default: $${CONFIG_PATH_ENV_VAR}, or ./.mcp-gateway/gateway.json,
-                         or <home>/.mcp-gateway/gateway.json)
+  -c, --config <path>    config file path
+  --hostname <host>      bind address for this run  (default: from the config)
+  --port <port>          bind port for this run     (default: from the config)
+  --public-url <url>     public https URL for this run (default: from the config)
+  -h, --help             show this message
+  -v, --version          print the version
+
+These override the config for THIS RUN ONLY. They are never written back to the file,
+so a tunnel URL that changes on every restart cannot silently become the installation's
+permanent identity. Without --public-url the gateway has no canonical URL to publish,
+which disables the OAuth client-metadata document and the RFC 9728 metadata a Claude
+connector needs.
 
 Config is searched in this order, first hit wins:
-  1. -c / --config <path>
-  2. $${CONFIG_PATH_ENV_VAR}
+  1. -c / --config <path>          authoritative; a missing file is an error
+  2. $GATEWAY_CONFIG
   3. ./.mcp-gateway/gateway.json
   4. $GATEWAY_HOME (or your home directory) + /.mcp-gateway/gateway.json
   5. ./gateway.json                    deprecated, warns
+
+  With no config found, serve writes a starter one to <home>/.mcp-gateway/gateway.json
+  and prints the generated key once. The validate command never writes anything.
 
 Exit codes:
   0  config is valid
@@ -291,27 +305,33 @@ if (invokedDirectly) {
     // `node dist/cli.js serve`. Without this the command exited with a usage error, which is
     // how the missing command was found: the smoke container refused to start.
     //
-    // The flags start one position later when a command word was given (`serve -c path`,
-    // slice(3)) and at the beginning when it was not (`-c path`, slice(2)), because a bare
-    // `-c` is now the default serve. Reading slice(3) unconditionally would silently drop
-    // the path and start the gateway on the wrong config.
-    const rest = process.argv.slice(2);
-    const restOffset = rest[0] === 'serve' ? 3 : 2;
-    const flag = parseConfigFlag(process.argv.slice(restOffset));
-    if (flag.error !== undefined) {
-      process.stderr.write(`${flag.error}
+    // The flags are parsed from the WHOLE argv, not from a slice whose start is computed by
+    // guessing where the command word ended. The old code did
+    // `process.argv.slice(rest[0] === 'serve' ? 3 : 2)`, which re-derives a decision `run()`
+    // has already made and silently drops the path whenever it guesses wrong. Reading argv
+    // once removes the class of bug, not this one instance of it.
+    const parsed = parseServeFlags(process.argv.slice(2));
+    if ('stderr' in parsed) {
+      process.stderr.write(`${parsed.stderr}
 `);
       process.exitCode = EXIT_USAGE;
     } else {
-      // The path goes to `main()` as an argument. It used to be rewritten into
-      // `process.argv` instead, and `main()` never read it -- so `-c` was silently ignored
-      // and the gateway fell back to $GATEWAY_CONFIG or ./gateway.json. Whenever
+      // The flags go to `main()` as an argument. They used to be rewritten into
+      // `process.argv` instead, and `main()` never read them -- so `-c` was silently
+      // ignored and the gateway fell back to $GATEWAY_CONFIG or ./gateway.json. Whenever
       // GATEWAY_CONFIG held the same value this looked like it worked.
       //
       // Deliberately NOT awaited at top level. `main()` returns once the server is
       // listening and the open listener is what keeps the process alive; awaiting it made
       // Node report "unsettled top-level await" and exit.
-      void main(flag.path === undefined ? {} : { configPath: flag.path }).catch((err: unknown) => {
+      void main(parsed.flags).catch((err: unknown) => {
+        if (err instanceof UsageError) {
+          // A bad flag value is a usage error, not a crash: exit 2, not 1.
+          process.stderr.write(`${err.message}
+`);
+          process.exitCode = EXIT_USAGE;
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(`${message}
 `);

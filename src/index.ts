@@ -20,6 +20,7 @@ import { OAuthService } from './auth/oauth-client/service.js';
 import { TokenStore, loadTokenKey } from './auth/oauth-client/token-store.js';
 import { resolve } from 'node:path';
 import { ConfigReloader } from './server/reload.js';
+import { applyOverrides, type ServeFlags } from './serve-flags.js';
 
 export interface RunningGateway {
   server: Server;
@@ -101,10 +102,22 @@ export interface StartOptions {
    * this so parallel gateways never share one file.
    */
   tokenStorePath?: string;
+  /**
+   * ADR 0013: `--hostname` / `--port` / `--public-url`. Applied to the parsed config
+   * BEFORE the HTTP app is built, because the Origin allowlist, the RFC 9728 audience and
+   * the CIMD client_id are all derived from the config at build time. Applied afterwards
+   * they would change the banner while leaving the OAuth metadata pointing at the old
+   * host, which surfaces as an `audience mismatch`.
+   */
+  flags?: ServeFlags;
 }
 
 export async function startGateway(options: StartOptions = {}): Promise<RunningGateway> {
-  const { config, path } = loadConfig(options.configPath === undefined ? {} : { path: options.configPath });
+  const loaded = loadConfig(options.configPath === undefined ? {} : { path: options.configPath });
+  // Throws UsageError for a malformed --public-url, which the CLI turns into exit 2.
+  const config =
+    options.flags === undefined ? loaded.config : applyOverrides(loaded.config, options.flags);
+  const { path } = loaded;
 
   const secrets = secretsFromConfig(config);
   // D9 / D14: register the literal secret values so no log line can ever carry one.
@@ -270,20 +283,26 @@ function createOAuthServiceIfConfigured(
 /**
  * Process entry point.
  *
- * `configPath` is what `cli.ts` parsed out of `-c` / `--config`. It was MISSING: `main()`
- * called `startGateway()` with no options, so the flag `cli.ts` rewrote into `process.argv`
- * was never read and the gateway silently fell back to `$GATEWAY_CONFIG` or `./gateway.json`.
+ * `flags` is what `cli.ts` parsed out of `-c` / `--hostname` / `--port` / `--public-url`.
+ * The `-c` part was MISSING: `main()` called `startGateway()` with no options, so the flag
+ * `cli.ts` rewrote into `process.argv` was never read and the gateway silently fell back
+ * to `$GATEWAY_CONFIG` or `./gateway.json`.
  *
  * That went unnoticed twice over. `serve` itself did not exist until S7.6, so there was
  * nothing to pass the flag to; and when `GATEWAY_CONFIG` happens to hold the same value the
  * fallback is indistinguishable from working. The result was that `-c <path>` appeared to
  * work and quietly started the wrong config.
  */
-export async function main(options: { configPath?: string } = {}): Promise<void> {
+export async function main(flags: ServeFlags = {}): Promise<void> {
   try {
-    const gateway = await startGateway(
-      options.configPath === undefined ? {} : { configPath: options.configPath },
-    );
+    const gateway = await startGateway({
+      ...(flags.configPath === undefined ? {} : { configPath: flags.configPath }),
+      ...(flags.hostname === undefined &&
+      flags.port === undefined &&
+      flags.publicUrl === undefined
+        ? {}
+        : { flags }),
+    });
     const { logger } = gateway;
     let shuttingDown = false;
     const shutdown = (signal: NodeJS.Signals): void => {
