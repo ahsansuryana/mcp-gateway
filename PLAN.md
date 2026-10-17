@@ -90,6 +90,9 @@ Facts below were read from primary sources on 2026-10-10. Re-verify in Sprint 0 
 | D15 | Tests: `vitest`. Unit tests use no network. E2E tests spin up fake upstream servers built with the SDK inside `test/fixtures/`. | Deterministic CI. |
 | D16 | Web framework: Express with the SDK's Express middleware if it exists and fits; otherwise `@modelcontextprotocol/node` with Node `http`. Decide in Sprint 0 from evidence, record in an ADR. | The author knows Express; SDK middleware reduces custom transport code. |
 | D17 | Subscription fan-out policy: (1) bursts inside 250 ms coalesce into ONE `notifications/tools/list_changed`; (2) an UPSTREAM list-changed push is ALWAYS relayed after the recompute, because the upstream may have changed a description or schema invisible to the name set; (3) an upstream STATUS transition notifies only when the merged name set actually changed, so flapping cannot spam clients. The gateway's own advertised `listChanged` bits are derived from what the open upstream subscriptions ACTUALLY honoured, so a downstream acknowledgement never claims more than was honoured. | Decided at the Sprint 3 gate; addresses Q-SUBSFWD and B-24. |
+| D18 | **Authorization server is embedded: one process, one deployment, one public hostname** (2026-10-17; supersedes the option A chosen at the Sprint 6 gate). Mandatory logical separation: the AS lives in `src/auth/as/**` and `POST /mcp` reaches it only through `TokenVerifier.verify(token) -> claims \| error`, never by touching AS state. Two implementations selected by config: `embedded` (default; verify this process's own tokens) and `external` (JWKS of an external IdP — the Sprint 6 behaviour, kept working). `/authorize`, `/token`, `/register` and `/.well-known/oauth-authorization-server` are AS routes and sit OUTSIDE the aggregate layer. | This deployment is single-user and personal, so the user store, password resets and multi-tenant blast radius ADR 0005 was written against do not exist here. The logical boundary keeps "split the AS out later" a config change rather than a refactor. → ADR 0014, Q3. |
+| D19 | An embedded AS means `/authorize` submits a **credential** over HTTP. The AS refuses to start unless its issuer is `https:` or it is bound to loopback, and `/authorize` refuses a non-`https:` `redirect_uri` unless it is loopback. A login page for a credential must not be served from the origin that credential protects, or phishing becomes indistinguishable from the real thing. | Decided 2026-10-17 alongside D18. The whole value of the browser flow is that it happens somewhere other than the thing it grants access to. |
+| D20 | **Issuer and resource URLs come from `gateway.publicUrl`, never from request headers.** The gateway is deployed behind a Cloudflare Tunnel / reverse proxy, where `Host`, `X-Forwarded-*` and the scheme are all attacker-controllable unless trust is set explicitly. Every metadata document, every `aud`, every `WWW-Authenticate` pointer and the D19 https check read `config.gateway.publicUrl`. `X-Forwarded-*` is honoured only when `gateway.trustProxy` is set explicitly in config; the default is `false`. A test asserts that with an `https` `publicUrl`, every generated document still begins with `https://` when the request carries `X-Forwarded-Proto: http`. | Decided 2026-10-17. Deriving the issuer from the request would let anyone who can reach the port publish metadata naming a host they control — and the issuer IS the whole OAuth trust anchor. |
 
 ---
 
@@ -319,6 +322,9 @@ Each sprint ends with the report in rule 11 and a STOP.
 
 ### Sprint 6 — Inbound OAuth (gateway as protected resource)
 - **S6.0 GATE (human decision required):** choose between (A) gateway is only a resource server and validates JWTs from an external authorization server (default recommendation; use `jose` for JWKS validation; verify with `npm view`), or (B) the gateway embeds its own authorization server. Do not start B without explicit human approval and an ADR with a threat model. Reason: an embedded AS is security-critical code.
+  **Gate SATISFIED 2026-10-10 for (A). Re-opened and re-answered 2026-10-17: the human chose
+  (B), embedded in one process. See Q3 and `docs/adr/0014-embedded-authorization-server.md`,
+  which supersedes `docs/adr/0005-inbound-oauth-resource-server.md`.**
 - **S6.1** Per the authorization spec page (read it again): publish the protected-resource metadata document, respond to unauthenticated requests with the `WWW-Authenticate` challenge the spec requires, validate audience/resource and expiry of tokens.
 - **S6.2** Keep static bearer keys working side by side (config `gateway.auth` accepts an array or a `type: "oauth"` variant; define the schema change in an ADR first).
 - **S6.3** Test with a fake authorization server and a client that follows the discovery flow. Then a manual test as a custom connector from claude.ai (the human performs this; the agent prepares the checklist).
@@ -332,6 +338,23 @@ Each sprint ends with the report in rule 11 and a STOP.
 - **S7.5** Docs: `README.md`, `docs/CONFIG.md` (generated from the schema), `docs/SECURITY.md`, `docs/OPERATIONS.md`.
 - **S7.6** Full E2E suite run in Docker; a smoke test script `scripts/smoke.sh` hitting `/healthz`, `server/discover`, `tools/list`, one `tools/call`.
 **Acceptance:** `docker build` + smoke script pass; all earlier tests still pass.
+
+### Sprint 8 — Embedded authorization server (Q3 re-opened 2026-10-17)
+**Goal:** one process serves both OAuth roles so a claude.ai custom connector can be added, with no second deployment and no external IdP.
+**Gate:** human decision recorded in Q3 + `docs/adr/0014-embedded-authorization-server.md` (D18, D19). Sprint 0's ground-truth discipline applies to every spec question below: read the page in `docs/ref/`, cite it, and append anything unresolved to `docs/OPEN-QUESTIONS.md` instead of guessing (rule 3).
+
+- **S8.1 `TokenVerifier` seam.** `src/auth/verifier.ts` defines `verify(token) -> {ok:true, claims} | {ok:false, reason}`. `POST /mcp` consumes ONLY this interface (D18). Two implementations: `EmbeddedTokenVerifier` (this process's own signing keys, via the keyring in S8.2) and `ExternalTokenVerifier` (the existing `ResourceServer` + `createRemoteJWKSet`). Config selects one via **`gateway.authMode: "embedded" | "external"`**; an existing `gateway.authOAuth` means `external`, so no existing config changes behaviour. **`authMode: "embedded"` together with a populated `authOAuth` is a startup error naming both key paths** — the two are mutually exclusive and the gateway must not silently pick one. A test asserts the gateway's module graph cannot reach `src/auth/as/**` except through this file.
+- **S8.2 Signing keyring.** Keyring at `<config dir>/data/as-signing-keys.json`, generated on first run, **rotatable**: a new key is published in JWKS before it signs anything, and an old key is retired only after its tokens have expired (do not repeat B-33, where the upstream token key cannot be rotated at all). Every token carries a `kid`. File 0600 inside the 0700 config dir.
+- **S8.3 Single-user login — scrypt, NO new dependency.** Node's built-in `crypto.scrypt`; add no package. Parameters: cost `N = 2^17`, block size `r = 8`, parallelisation `p = 1`, and a fresh 16-byte random salt per hash. **`maxmem` must be raised explicitly** — scrypt needs `128 * r * N` bytes, so `N=2^17, r=8` is ~128 MiB and Node's 32 MiB default would fail. `N` is a floor of `2^15`, never lower. The parameters are **stored inside the hash string** so they can be raised later without invalidating existing hashes. Verification compares with `crypto.timingSafeEqual`.
+- **S8.4 Installing the password — both ways required.** (a) CLI `mcp-gateway auth set-password`, prompting without echo, writing the hash to `<config dir>/auth-password.json` (0600). (b) Env `GATEWAY_AUTH_PASSWORD_HASH`. **When both exist the env var wins**, and the startup log names which source was used WITHOUT echoing the value. A hash that does not parse, or that names parameters below the floor, is a **startup error naming the source** — never a silent fallback to "no password".
+- **S8.5 Authorization code + PKCE.** `GET /authorize`: validate `response_type=code`, require `code_challenge` with `code_challenge_method=S256` (never `plain`), exact-match `redirect_uri` against the configured allowlist, issue a single-use code with a short TTL stored HASHED. `state` echoed unchanged. `POST /token` exchanges `code` + `code_verifier`; replay and expiry both answer `invalid_grant` (RFC 6749 §5.2).
+- **S8.6 Tokens.** Short-lived access token, `aud` bound to the canonical resource URL (`publicUrl` + `/mcp`, no trailing slash). Refresh token with **rotation**: a refresh returns a new refresh token and invalidates the old one; a replayed old token answers `invalid_grant` and revokes the whole chain (`docs/ref/claude-connector-requirements.md` §3.3 A4).
+- **S8.7 Client registration — DCR ONLY.** `/register` per RFC 7591. **No CIMD in Sprint 8**; it goes to `docs/BACKLOG.md` as its own item. Three bounds that must exist because DCR is otherwise unbounded (Anthropic warns it "register[s] a new client on every fresh connection"): a **maximum registered clients** cap, **cleanup of clients that never completed a flow** after N days (configurable), and a **dedicated rate limit on `/register`** separate from the one on `/authorize` and `/token`. The token endpoint MUST accept `application/x-www-form-urlencoded` and answer `415` otherwise (§3.3 A1).
+- **S8.8 Discovery (D20).** `/.well-known/oauth-authorization-server` (RFC 8414) with `issuer` **byte-identical** to the `iss` claim of its own tokens; `/.well-known/oauth-protected-resource/mcp` (RFC 9728) pointing at that same issuer, `resource` equal to the MCP URL. Every URL is built from `config.gateway.publicUrl` and NEVER from request headers. The unauthenticated `401` from `POST /mcp` carries `WWW-Authenticate: Bearer resource_metadata=...` (§3.1 G2/G3). **The embedded AS requires `gateway.publicUrl`**: without a canonical URL there is no issuer to publish, so that is a startup error naming the key, never a silent `http://localhost` issuer.
+- **S8.9 Rate limiting** on `/authorize`, `/token` and `/register`, reusing the existing `RateLimiter`; `429` + `Retry-After`.
+- **S8.10 Tests.** Full discovery -> authorize -> code -> token -> `tools/list` through the real gateway; wrong `aud` rejected; `plain` PKCE rejected; replayed code `invalid_grant`; replayed refresh token `invalid_grant` + chain revoked; non-whitelisted `redirect_uri` refused; wrong password `401` with a generic body; DCR cap and stale-client cleanup; `authMode: embedded` + `authOAuth` rejected; **an `X-Forwarded-Proto: http` request must not make any emitted document non-`https`** when `publicUrl` is `https` (D20). A secret-canary assertion over every new code path.
+- **S8.11 Docs.** ADR 0014 with its threat model, superseding ADR 0005; `docs/SECURITY.md` section on the embedded AS; `docs/OPERATIONS.md` runbook for the one-hostname deployment behind a Cloudflare Tunnel / reverse proxy, including the **DEFERRED manual claude.ai connector test** (Q4 still open); README.
+**Acceptance:** `npm run typecheck && npm run lint && npm test` green; the S8.10 end-to-end flow passes on `127.0.0.1`; the claude.ai connector checklist is delivered in `docs/OPERATIONS.md` as a **deferred manual test**, explicitly NOT as a passed one.
 
 ---
 
@@ -369,10 +392,19 @@ Code + tests + `npm run typecheck && npm run lint && npm test` green + external 
   report state `error`. No fallback is implemented. → `docs/adr/0004-no-http-sse-upstreams.md`
 - **Q2 — RESOLVED (Sprint 0 gate).** Serve 2025-era clients, via `gateway.legacyEra`
   defaulting to `'stateless'`. → `docs/adr/0002-protocol-compatibility.md`
-- **Q3 — RESOLVED: option A.** Sprint 6's gateway is an OAuth RESOURCE SERVER ONLY and
-  validates tokens from an EXTERNAL authorization server. An embedded authorization server
-  (option B) is out of scope and MUST NOT be built. S6.0 therefore requires no further human
-  decision; the ADR is written when Sprint 6 starts. → `docs/adr/0005-inbound-oauth-resource-server.md`
+- **Q3 — RESOLVED (2026-10-17), option B, EMBEDDED.** Sprint 8's gateway serves BOTH roles
+  in **one process, one deployment, one public hostname**: OAuth resource server
+  (`POST /mcp`) and embedded authorization server (`/authorize`, `/token`, `/register`,
+  `/.well-known/oauth-authorization-server`, single-user login/consent).
+  **Supersedes** the S6.0 gate's option A and ADR 0005. → `docs/adr/0014-embedded-authorization-server.md`
+  Rationale recorded in ADR 0014: this deployment is single-user and personal, so the
+  user-store blast radius ADR 0005 was written against does not exist here.
+  The **logical separation is mandatory and machine-checked**: the AS lives in its own
+  module tree, and `POST /mcp` may reach it only through the `TokenVerifier` interface —
+  never by touching AS state directly. Two implementations exist and config selects one, so
+  splitting the AS out later is a config change, not a refactor:
+  `"embedded"` (default; verify this process's own tokens) and `"external"` (verify JWT via an
+  external IdP's JWKS — the Sprint 6 behaviour, kept working).
 - **Q4 — STILL OPEN.** Hosting target and public hostname (for `publicUrl`, TLS termination,
   Origin allowlist). Until it is answered, the Origin allowlist stays localhost-only and no
   hostname may be invented.
