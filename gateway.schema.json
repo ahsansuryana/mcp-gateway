@@ -108,6 +108,16 @@
             "issuer"
           ],
           "additionalProperties": false
+        },
+        "authMode": {
+          "type": "string",
+          "enum": [
+            "embedded",
+            "external"
+          ]
+        },
+        "trustProxy": {
+          "type": "boolean"
         }
       },
       "required": [

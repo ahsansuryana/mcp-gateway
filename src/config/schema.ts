@@ -163,6 +163,33 @@ const mcp = z.record(serverName, upstream);
 const gatewayWithAuth = gateway.extend({
   /** PLAN.md S6.2 / ADR 0009. Optional; absent means "not an OAuth protected resource". */
   authOAuth: authOAuth.optional(),
+  /**
+   * PLAN.md S8.1 / D18: which token issuer `POST /mcp` trusts.
+   *
+   * OPTIONAL, and the default is derived rather than stated: `authOAuth` means "external",
+   * so every config written before Sprint 8 keeps its meaning without editing it. This is the
+   * whole point of the seam -- moving the embedded AS out later is changing this field.
+   */
+  authMode: z.enum(['embedded', 'external']).optional(),
+  /**
+   * PLAN.md S8.8 / D20: whether `X-Forwarded-*` may influence anything.
+   *
+   * Optional rather than `z.boolean().default(false)`, and absent MEANS false. A zod default
+   * would make the field required in the inferred `GatewayConfig`, which breaks every test
+   * that builds a config literal -- and would force a pointless `trustProxy: false` into each
+   * one for a value nobody sets. `authMode` and `authOAuth` above are optional for the same
+   * reason. Call sites read `config.gateway.trustProxy === true`.
+   *
+   * The default is the safe one. The gateway is deployed behind a Cloudflare Tunnel / reverse
+   * proxy where `Host`, `X-Forwarded-Proto` and `X-Forwarded-Host` are attacker-controlled by
+   * anyone who can reach the port, and the issuer IS the entire OAuth trust anchor. Deriving
+   * it from a request header would let such a caller publish metadata naming a host they
+   * control.
+   *
+   * Setting this is an explicit statement that exactly one proxy sits in front and rewrites
+   * these headers correctly.
+   */
+  trustProxy: z.boolean().optional(),
 });
 
 /**

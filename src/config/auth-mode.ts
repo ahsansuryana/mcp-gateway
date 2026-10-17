@@ -22,6 +22,7 @@
 // reachable from the network -- not even a brief one.
 
 import type { GatewayConfig } from './schema.js';
+import { authModeConflictReason } from '../auth/token-verifier.js';
 import { isLoopbackHost } from '../server/banner.js';
 
 export type AuthMode = 'bearer' | 'oauth-only' | 'open';
@@ -46,8 +47,24 @@ export function resolveAuthMode(config: GatewayConfig): AuthModeDecision {
   if (keyCount > 0) return { mode: 'bearer', keyCount };
   // ADR 0009 already allows OAuth to stand alone with no static keys, so this combination is
   // not the dangerous one -- the request is still checked, just against a token instead.
-  if (config.gateway.authOAuth !== undefined) return { mode: 'oauth-only', keyCount };
+  //
+  // S8.1 / D18: the embedded authorization server counts here too. Without it, a gateway whose
+  // only credential is a token minted by this same process would be classified `open`, which
+  // is the opposite of the truth -- that gateway is protected, by a token.
+  if (hasTokenIssuer(config)) return { mode: 'oauth-only', keyCount };
   return { mode: 'open', keyCount, reason: UNPROTECTED_REASON };
+}
+
+/**
+ * True when some token issuer is configured, embedded or external.
+ *
+ * `authMode` alone is enough to say a token issuer exists; S8.8 makes a missing
+ * `gateway.publicUrl` a startup error for the embedded AS rather than leaving the AS enabled
+ * but unable to publish an issuer.
+ */
+function hasTokenIssuer(config: GatewayConfig): boolean {
+  if (config.gateway.authOAuth !== undefined) return true;
+  return config.gateway.authMode === 'embedded' || config.gateway.authMode === 'external';
 }
 
 /** A schema-shaped problem, so callers can render it without importing ConfigErrorList. */
@@ -65,6 +82,14 @@ export interface AuthModeProblem {
  * would send the operator looking in the schema instead of at their own config.
  */
 export function checkAuthMode(config: GatewayConfig): AuthModeProblem | undefined {
+  // S8.1 / D18: the two token issuers are mutually exclusive. Resolving this by preference
+  // would mean a config the operator believes authenticates against an embedded AS silently
+  // authenticates against a remote IdP instead, or the reverse -- and both failures look like
+  // "logins stopped working" rather than like a config mistake.
+  if (config.gateway.authMode === 'embedded' && config.gateway.authOAuth !== undefined) {
+    return { path: 'gateway.authMode', reason: authModeConflictReason() };
+  }
+
   const decision = resolveAuthMode(config);
   if (decision.mode !== 'open') return undefined;
   if (isLoopbackHost(config.gateway.host)) return undefined;

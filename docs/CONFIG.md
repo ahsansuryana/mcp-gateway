@@ -31,6 +31,8 @@ See `gateway.example.json` for a working example.
 | `defaultTtlMs` | integer | no | `30000` | min 0; max 2147483647 |
 | `legacyEra` | `stateless` | `reject` | no | `"stateless"` | — |
 | `authOAuth` | object | no | — | — |
+| `authMode` | `embedded` | `external` | no | — | — |
+| `trustProxy` | boolean | no | — | — |
 
 ##### `auth`
 
