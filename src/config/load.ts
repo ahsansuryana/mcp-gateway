@@ -14,6 +14,7 @@ import {
   validateCrossFieldConfig,
   type GatewayConfig,
 } from './schema.js';
+import { checkAuthMode } from './auth-mode.js';
 import { substitute, SubstitutionError, type SubstituteOptions } from './substitute.js';
 import {
   CONFIG_DIR_NAME,
@@ -174,6 +175,15 @@ export function parseConfig(raw: string, sourcePath: string, options: Substitute
   const urlErrors = validateCrossFieldConfig(result.data);
   if (urlErrors.length > 0) {
     throw new ConfigErrorList(urlErrors.map(splitReason));
+  }
+
+  // ADR 0013: an unauthenticated /mcp is allowed, but only on a loopback bind. Checked HERE
+  // as well as in startGateway: this is what makes `mcp-gateway validate` report the problem
+  // for a config file, and startGateway's own check is what catches a `--hostname` that
+  // turns a safe config into an unsafe one.
+  const authProblem = checkAuthMode(result.data);
+  if (authProblem !== undefined) {
+    throw new ConfigErrorList([authProblem]);
   }
 
   return { config: result.data, path: sourcePath };

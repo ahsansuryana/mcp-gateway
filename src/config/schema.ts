@@ -166,26 +166,21 @@ const gatewayWithAuth = gateway.extend({
 });
 
 /**
- * At least ONE inbound credential must exist.
+ * ADR 0013 replaced the old `gatewayGuarded` superRefine, which rejected an empty `keys`
+ * with no `authOAuth` on the grounds that it leaves `/mcp` open.
  *
- * `keys` may now be empty (ADR 0009 lets OAuth stand alone), but an empty `keys` AND no
- * `authOAuth` would leave `/mcp` open to anyone who can reach the port. That combination is
- * rejected at startup rather than discovered in production.
+ * That rejection moved OUT of the schema on purpose. A superRefine runs inside
+ * `loadConfig`, which runs BEFORE `applyOverrides`, so it could never see `--hostname
+ * 0.0.0.0`: the flag would pass validation and the gateway would listen on the LAN with
+ * /mcp open. The rule now lives in `src/config/auth-mode.ts` and is checked from
+ * `parseConfig` (for `validate`) AND from `startGateway` after the overrides apply.
+ *
+ * The schema no longer second-guesses the operator here at all; `keys` may be empty, which
+ * means "open on loopback", and `checkAuthMode` decides whether that is safe.
  */
-const gatewayGuarded = gatewayWithAuth.superRefine((value, ctx) => {
-  if (value.auth.keys.length === 0 && value.authOAuth === undefined) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['auth', 'keys'],
-      message:
-        'at least one inbound credential is required: set gateway.auth.keys or gateway.authOAuth',
-    });
-  }
-});
-
 export const gatewayConfigSchema = z.strictObject({
   $schema: z.string().optional(),
-  gateway: gatewayGuarded,
+  gateway: gatewayWithAuth,
   mcp,
 });
 

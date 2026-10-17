@@ -8,7 +8,8 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 
 import { createHash } from 'node:crypto';
 
-import { createBearerAuth } from './auth.js';
+import { createBearerAuth, alwaysAuthorized } from './auth.js';
+import { resolveAuthMode } from '../config/auth-mode.js';
 import { OAuthService } from '../auth/oauth-client/service.js';
 import { ResourceServer } from '../auth/oauth-resource/resource-server.js';
 import { RateLimiter } from './rate-limit.js';
@@ -77,7 +78,20 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
     res.status(200).json({ ok: true });
   });
 
-  const auth = createBearerAuth(config.gateway.auth.keys);
+  const authMode = resolveAuthMode(config);
+  const auth =
+    authMode.mode === 'open'
+      ? alwaysAuthorized()
+      : createBearerAuth(config.gateway.auth.keys);
+
+  if (authMode.mode === 'open') {
+    // Warned again here even though startGateway already warned. The banner is seen once,
+    // on one screen; this lands in whatever log file the deployment actually keeps.
+    logger.warn(
+      { host: config.gateway.host },
+      'POST /mcp accepts any caller: no bearer key and no OAuth resource server are configured',
+    );
+  }
 
   // PLAN.md S7.2. Keyed by the authenticated identity, never by IP: behind a proxy every
   // caller shares one, and D9 forbids revealing anything about the presented key.
@@ -87,15 +101,33 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
     windowMs: rateLimitConfig?.windowMs ?? 60_000,
   });
 
-  /** Applies the bucket once the caller is identified. */
   /**
+   * Applies the bucket once the caller is identified.
+   *
    * One bucket per CONFIGURED static key, derived from the key's SHA-256 digest.
    *
    * B-37. The key itself is never the bucket identity: the digest is one-way, and the
    * limiter hashes the whole subject again before it becomes a map key, so neither the key
    * nor anything reversible from it is ever retained.
+   *
+   * In open mode there are no keys, so every caller shares the `open` bucket. That is
+   * honest: they ARE one subject, because nothing distinguishes them.
    */
-  const staticBucketIds = config.gateway.auth.keys.map((key) => `static:${sha256(key)}`);
+  const staticBucketIds =
+    authMode.mode === 'open'
+      ? []
+      : config.gateway.auth.keys.map((key) => `static:${sha256(key)}`);
+
+  /**
+   * The rate-limit bucket for a successfully authenticated static caller.
+   *
+   * In open mode there are no keys and nothing distinguishes one caller from another, so
+   * they all share the single `open` bucket. That is honest rather than a loophole: they
+   * really are one subject. Keeping the mode check here, once, is what stops a call site
+   * from quietly indexing an empty array.
+   */
+  const bucketFor = (keyIndex: number): string =>
+    authMode.mode === 'open' ? 'open' : (staticBucketIds[keyIndex] ?? API_KEY_ID);
 
   const enforceRateLimit = (res: Response, subject: string): boolean => {
     if (!rateLimiter.enabled) return true;
@@ -243,7 +275,7 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
-    if (!enforceRateLimit(res, `${staticBucketIds[outcome.keyIndex] ?? API_KEY_ID}:status`)) return;
+    if (!enforceRateLimit(res, `${bucketFor(outcome.keyIndex)}:status`)) return;
     res.status(200).json({
       gateway: {
         host: config.gateway.host,
@@ -254,6 +286,12 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
         defaultTtlMs: config.gateway.defaultTtlMs,
         // The COUNT only: PLAN.md rule 9 forbids the values in /status.
         inboundAuthKeys: config.gateway.auth.keys.length,
+        // ADR 0013. Reported because "is this gateway open?" is a question /status is
+        // exactly where an operator asks it, and the banner that also answers it is seen
+        // once and then scrolls away. Without this the state would be discoverable only in
+        // the first three seconds of the process's life.
+        authMode: authMode.mode,
+        ...(authMode.reason === undefined ? {} : { authWarning: authMode.reason }),
         configuredUpstreams: Object.keys(config.mcp).length,
         // S6.1: the ISSUER is not a secret (it is published in the metadata document), so
         // it is safe and useful to report. No token, key or JWKS content ever appears here.
@@ -326,7 +364,7 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
         res.status(401).json({ error: 'unauthorized' });
         return;
       }
-      if (!enforceRateLimit(res, `${staticBucketIds[outcome.keyIndex] ?? API_KEY_ID}:mcp`)) return;
+      if (!enforceRateLimit(res, `${bucketFor(outcome.keyIndex)}:mcp`)) return;
       nodeHandler(req, res, req.body as unknown).catch(next);
     },
   );
@@ -340,12 +378,6 @@ export function buildHttpApp(options: BuildHttpOptions): HttpApp {
   };
 }
 
-/**
- * Extracts the bearer token from an Authorization header.
- *
- * verified: docs/ref/spec-2026-07-28-basic-authorization-index.md line 273 — access tokens
- *   MUST NOT be included in the URI query string, so the header is the only place to look.
- */
 /**
  * Fallback bucket identity, used only if `keyIndex` is somehow out of range.
  *
@@ -365,6 +397,15 @@ function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('base64url');
 }
 
+/**
+ * Extracts the bearer token from an Authorization header.
+ *
+ * verified: docs/ref/spec-2026-07-28-basic-authorization-index.md line 273 — access tokens
+ *   MUST NOT be included in the URI query string, so the header is the only place to look.
+ *
+ * The doc comment sat above `API_KEY_ID` in the file until now, describing a function two
+ * declarations away. It is reattached to what it describes.
+ */
 function bearerOf(header: string | undefined): string | undefined {
   if (header === undefined) return undefined;
   const match = /^Bearer[ ]+(.+)$/i.exec(header.trim());

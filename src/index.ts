@@ -21,6 +21,7 @@ import { TokenStore, loadTokenKey } from './auth/oauth-client/token-store.js';
 import { resolve } from 'node:path';
 import { ConfigReloader } from './server/reload.js';
 import { applyOverrides, type ServeFlags } from './serve-flags.js';
+import { checkAuthMode, resolveAuthMode } from './config/auth-mode.js';
 import { renderBanner } from './server/banner.js';
 
 export interface RunningGateway {
@@ -129,6 +130,19 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
   // Throws UsageError for a malformed --public-url, which the CLI turns into exit 2.
   const config =
     options.flags === undefined ? loaded.config : applyOverrides(loaded.config, options.flags);
+
+  // ADR 0013: re-checked HERE, after the overrides, not only inside loadConfig.
+  //
+  // loadConfig validated the config FILE, and it ran before --hostname was applied. Without
+  // this second check, `mcp-gateway --hostname 0.0.0.0` against a keyless config would pass
+  // validation and then listen on the LAN with POST /mcp open to every host that can reach
+  // the port. The check is before `listen`, so there is no window in which that is true even
+  // momentarily.
+  const authProblem = checkAuthMode(config);
+  if (authProblem !== undefined) {
+    throw new ConfigErrorList([authProblem]);
+  }
+  const authMode = resolveAuthMode(config);
   const { path } = loaded;
 
   const secrets = secretsFromConfig(config);
@@ -188,17 +202,13 @@ export async function startGateway(options: StartOptions = {}): Promise<RunningG
   // `config.gateway.port`: the configured port is what was ASKED for, the bound port is what
   // is LISTENING, and they differ whenever the listener took a fallback -- a banner that
   // disagrees with the listener is worse than no banner at all.
-  //
-  // `protectedGateway` is hard-coded true here and stops being so in the auth commit, which
-  // is where the open-mode decision lands. Wiring the call site now keeps this commit to the
-  // banner itself.
   process.stdout.write(
     renderBanner({
       host: config.gateway.host,
       port,
       ...(config.gateway.publicUrl === undefined ? {} : { publicUrl: config.gateway.publicUrl }),
       upstreamCount: Object.keys(config.mcp).length,
-      protectedGateway: true,
+      protectedGateway: authMode.mode !== 'open',
       configPath: path,
       configCreated: options.configCreated === true,
     }),
