@@ -136,9 +136,18 @@ export function buildHttpServer({ cfg, pool, oauth, createGatewayServer, publicU
     }
   };
 
+  /** GATEWAY_DEBUG=1/true/on mengaktifkan log request; 0/false/kosong = mati. */
+  const debug = /^(1|true|on|yes)$/i.test(process.env.GATEWAY_DEBUG ?? "");
+
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://x");
     const path = url.pathname;
+
+    if (debug && path !== "/health") {
+      res.on("finish", () =>
+        log("INFO", `req ${req.method} ${req.url} host=${req.headers.host ?? "-"} -> ${res.statusCode}`),
+      );
+    }
 
     if (oauth && (await handleOAuthRoute(oauth, req, res, url, helpers))) return;
 
