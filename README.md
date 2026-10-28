@@ -15,6 +15,7 @@ Fitur utama:
 
 1. [Prasyarat dan instalasi](#prasyarat-dan-instalasi)
 2. [Menjalankan](#menjalankan)
+   - [Docker](#docker)
 3. [Menyambungkan agen](#menyambungkan-agen)
 4. [Referensi konfigurasi (schema)](#referensi-konfigurasi-schema)
 5. [Mode expose: full, lazy, auto](#mode-expose-full-lazy-auto)
@@ -110,6 +111,25 @@ gateway.json
 tokens.json
 oauth-server.json
 ```
+
+## Docker
+
+Image memakai Node 22, build multi-stage, dan berjalan sebagai user non-root `node` (uid 1000).
+
+```bash
+mkdir data
+cp gateway.example.json gateway.json        # sesuaikan; server.port harus 8000
+cp .env.example .env                        # isi GATEWAY_TOKEN, GATEWAY_PASSWORD, dll.
+docker compose up -d --build
+docker compose logs -f
+```
+
+- `data/` di-mount ke `/data`. Isinya `gateway.json` dan file state (`tokens.json`, `oauth-server.json`), karena path state dihitung relatif ke folder konfigurasi. Folder ini harus bisa ditulis uid 1000: buat dengan user biasa, atau `sudo chown -R 1000:1000 data`.
+- Port host diatur lewat `GATEWAY_PORT` di `.env` (default 8000). Port di dalam container tetap `server.port` dari `gateway.json`; jika diubah dari 8000, sesuaikan juga mapping port di `docker-compose.yml` dan `HEALTHCHECK` di `Dockerfile`.
+- Variabel `${NAMA}` di `gateway.json` diisi dari `.env`.
+- Backend `stdio` yang memakai `npx` jalan di dalam container, jadi paketnya diunduh saat pertama kali (cache di volume `npm-cache`). Backend yang butuh binary lain atau browser (mis. Playwright) tidak tersedia di image dasar; buat image turunan atau pakai backend `http`.
+- Backend yang menunjuk `localhost` (mis. `http://localhost:3002/sse`) menunjuk ke container itu sendiri, bukan host. Pakai `host.docker.internal` (tambahkan `extra_hosts: ["host.docker.internal:host-gateway"]` di compose) atau nama service jika satu jaringan compose.
+- Login OAuth ke backend: `backend_redirect_url` default `http://localhost:8000/oauth/callback`. Jika `GATEWAY_PORT` bukan 8000, atau gateway di server remote, atur `server.backend_redirect_url` dan `server.public_url` sesuai alamat yang dibuka di browser.
 
 ## Menyambungkan agen
 

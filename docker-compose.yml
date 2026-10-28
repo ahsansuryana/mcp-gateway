@@ -1,0 +1,19 @@
+services:
+  mcp-gateway:
+    build: .
+    image: mcp-gateway:latest
+    container_name: mcp-gateway
+    restart: unless-stopped
+    init: true # reaping proses anak (backend stdio) dan sinyal yang benar
+    ports:
+      # Port container harus sama dengan server.port di gateway.json (default 8000).
+      # Bind ke 127.0.0.1 bila gateway dipasang di belakang reverse proxy.
+      - "${GATEWAY_PORT:-8000}:8000"
+    env_file:
+      - .env # variabel yang dirujuk ${NAMA} di gateway.json
+    volumes:
+      - ./gateway.json:/data/gateway.json:ro # konfigurasi, diedit di host
+      - ./data:/data # state: tokens.json + oauth-server.json (persisten)
+      - npm-cache:/home/node/.npm # cache npx untuk backend stdio
+volumes:
+  npm-cache:
