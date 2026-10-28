@@ -1,0 +1,83 @@
+{
+  "server": {
+    "name": "my-gateway",
+    "host": "0.0.0.0",
+    "port": 8000,
+    "public_url": "https://gw.example.com",
+    "extra_public_urls": ["http://192.168.1.10:8000"],
+    "backend_redirect_url": "http://localhost:8000/oauth/callback",
+    "trust_proxy": false,
+    "auth_token": "${GATEWAY_TOKEN}",
+    "oauth": {
+      "password": "${GATEWAY_PASSWORD}",
+      "access_ttl": 3600,
+      "refresh_ttl": 2592000,
+      "store": "oauth-server.json"
+    },
+    "token_store": "tokens.json",
+    "call_timeout": 60,
+    "lazy_threshold": 40,
+    "tools_cache_ttl": 60
+  },
+  "separator": "__",
+  "compact": {
+    "strip_param_descriptions": false,
+    "strip_output_schema": true
+  },
+  "servers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"],
+      "expose": "full",
+      "deny_tools": ["write_*", "move_file", "edit_file"]
+    },
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" },
+      "expose": "auto",
+      "allow_tools": ["search_*", "get_*", "list_*"]
+    },
+    "internal_sse": {
+      "type": "sse",
+      "url": "http://localhost:3002/sse",
+      "enabled": false
+    },
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "expose": "full"
+    },
+    "vercel": {
+      "type": "http",
+      "url": "https://mcp.vercel.com",
+      "auth": { "type": "oauth" },
+      "expose": "lazy"
+    },
+    "some_oauth_backend": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "auth": {
+        "type": "oauth",
+        "client_name": "My Gateway",
+        "client_id": "${SOME_CLIENT_ID}",
+        "client_secret": "${SOME_CLIENT_SECRET}",
+        "scope": "read write"
+      },
+      "enabled": false
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "env": { "PLAYWRIGHT_BROWSERS_PATH": "/opt/browsers" },
+      "expose": "lazy"
+    }
+  },
+  "profiles": {
+    "dev": ["github", "vercel", "deepwiki"],
+    "browse": ["playwright"],
+    "readonly": ["filesystem", "deepwiki"]
+  }
+}
