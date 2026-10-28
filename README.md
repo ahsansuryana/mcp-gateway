@@ -34,13 +34,29 @@ Fitur utama:
 - Paket `@modelcontextprotocol/sdk` versi 1.x.
 
 ```bash
-mkdir mcp-gateway && cd mcp-gateway
-# letakkan gateway.mjs di sini
-npm init -y
-npm i @modelcontextprotocol/sdk@^1
+git clone <url-repo> mcp-gateway && cd mcp-gateway
+npm install
+npm run build
 ```
 
-Ekstensi `.mjs` membuat Node memperlakukannya sebagai ES module, jadi `package.json` tidak perlu diubah.
+Project ini ditulis dalam TypeScript (ES module). Hasil build ada di `dist/`.
+
+### Struktur project
+
+```
+src/
+  index.ts         entry CLI (-c / --config)
+  app.ts           merakit komponen, start, shutdown
+  config/          tipe dan loader konfigurasi
+  backend/         koneksi ke backend: pool, OAuth client, token store
+  gateway/         katalog tool, filter allow/deny, mode lazy, compact
+  oauth-server/    authorization server OAuth 2.1 milik gateway
+  http/            server HTTP (/mcp, /health, /oauth/callback)
+  utils/           logger, glob, crypto, html
+test/              unit test (npm test)
+```
+
+Skrip npm: `npm run dev` (watch, tanpa build), `npm run build`, `npm start`, `npm run typecheck`, `npm test`.
 
 ## Menjalankan
 
@@ -60,8 +76,9 @@ Ekstensi `.mjs` membuat Node memperlakukannya sebagai ES module, jadi `package.j
 3. Jalankan:
 
    ```bash
-   node gateway.mjs                      # memakai ./gateway.json
-   node gateway.mjs -c /path/conf.json   # konfigurasi lain
+   npm start                                  # memakai ./gateway.json
+   node dist/index.js -c /path/conf.json      # konfigurasi lain
+   npm run dev                                # mode pengembangan (tsx watch)
    ```
 
 Contoh log saat start:
@@ -328,7 +345,7 @@ After=network-online.target
 [Service]
 WorkingDirectory=/opt/mcp-gateway
 EnvironmentFile=/etc/mcp-gateway.env
-ExecStart=/usr/bin/node gateway.mjs -c /opt/mcp-gateway/gateway.json
+ExecStart=/usr/bin/node dist/index.js -c /opt/mcp-gateway/gateway.json
 Restart=on-failure
 User=mcp
 
