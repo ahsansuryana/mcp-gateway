@@ -1,4 +1,16 @@
 {
+  "name": "mcp-gateway",
+  "version": "1.0.0",
+  "description": "Satu endpoint MCP yang menggabungkan banyak MCP server (stdio, HTTP, SSE).",
+  "private": true,
+  "type": "module",
+  "bin": { "mcp-gateway": "gateway.js" },
+  "main": "src/main.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node gateway.js",
+    "test": "node --test"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2"
   }

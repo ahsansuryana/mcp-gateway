@@ -25,6 +25,7 @@ Fitur utama:
 10. [Keamanan](#keamanan)
 11. [Pemecahan masalah](#pemecahan-masalah)
 12. [Batasan](#batasan)
+13. [Struktur proyek](#struktur-proyek)
 
 ---
 
@@ -35,12 +36,12 @@ Fitur utama:
 
 ```bash
 mkdir mcp-gateway && cd mcp-gateway
-# letakkan gateway.mjs di sini
+# salin gateway.js dan folder src/ ke sini
 npm init -y
 npm i @modelcontextprotocol/sdk@^1
 ```
 
-Ekstensi `.mjs` membuat Node memperlakukannya sebagai ES module, jadi `package.json` tidak perlu diubah.
+Semua file berekstensi `.js` (ES module). `gateway.js` hanyalah entry point tipis; kodenya ada di `src/`.
 
 ## Menjalankan
 
@@ -60,8 +61,8 @@ Ekstensi `.mjs` membuat Node memperlakukannya sebagai ES module, jadi `package.j
 3. Jalankan:
 
    ```bash
-   node gateway.mjs                      # memakai ./gateway.json
-   node gateway.mjs -c /path/conf.json   # konfigurasi lain
+   node gateway.js                      # memakai ./gateway.json
+   node gateway.js -c /path/conf.json   # konfigurasi lain
    ```
 
 Contoh log saat start:
@@ -328,7 +329,7 @@ After=network-online.target
 [Service]
 WorkingDirectory=/opt/mcp-gateway
 EnvironmentFile=/etc/mcp-gateway.env
-ExecStart=/usr/bin/node gateway.mjs -c /opt/mcp-gateway/gateway.json
+ExecStart=/usr/bin/node gateway.js -c /opt/mcp-gateway/gateway.json
 Restart=on-failure
 User=mcp
 
@@ -382,3 +383,57 @@ journalctl -u mcp-gateway -f
 - Tidak ada deteksi pemakaian ulang refresh token lama.
 - Mode stateless: tidak ada stream server-ke-klien, sehingga notifikasi dari backend tidak diteruskan ke agen.
 - Konfigurasi tidak di-reload otomatis.
+
+---
+
+## Struktur proyek
+
+```
+mcp-gateway/
+├── gateway.js                entry point tipis (node gateway.js tetap berlaku)
+├── gateway.json               konfigurasi aktif (di-gitignore)
+├── gateway.example.json       contoh konfigurasi
+├── src/
+│   ├── main.js               CLI: baca argumen -c, start, shutdown (SIGINT/SIGTERM)
+│   ├── app.js                createApp(): merakit config, pool, OAuth, HTTP server
+│   ├── config/
+│   │   ├── load.js           baca + validasi gateway.json, ekspansi ${ENV}
+│   │   └── runtime.js        nilai turunan: host/port, public_url, redirect URI, daftar issuer
+│   ├── backends/              arah gateway -> backend (gateway = klien MCP / OAuth client)
+│   │   ├── pool.js           BackendPool: koneksi, reconnect + backoff, cache tool, login OAuth
+│   │   ├── transports.js     factory transport http | sse | stdio
+│   │   ├── oauth-provider.js OAuth client provider untuk SDK
+│   │   └── token-store.js    tokens.json (izin 0600)
+│   ├── gateway/               server MCP yang dilihat agen
+│   │   ├── server.js         makeGatewayFactory(): ListTools / CallTool
+│   │   ├── context.js        nilai turunan config + nama tool bawaan
+│   │   ├── catalog.js        katalog tool, allow/deny, scope profil, mode full/lazy/auto
+│   │   ├── handlers.js       eksekusi tool, search, describe, status
+│   │   ├── meta-tools.js     definisi gateway__status / search_tools / describe_tool / call_tool
+│   │   ├── compact.js        pemadatan deskripsi dan schema
+│   │   └── results.js        helper hasil tool + deteksi error auth
+│   ├── oauth-server/          arah agen -> gateway (gateway = authorization server)
+│   │   ├── oauth-server.js   class OAuthServer: DCR, PKCE, token, refresh, revoke
+│   │   ├── routes.js         /register /authorize /token /revoke /.well-known/*
+│   │   ├── pages.js          halaman login persetujuan
+│   │   └── util.js           validasi redirect URI
+│   ├── http/
+│   │   ├── server.js         dispatcher route
+│   │   ├── access.js         bearer auth, issuer per-request, IP klien
+│   │   ├── io.js             sendJson / sendHtml / baca body
+│   │   └── routes/            health.js, backend-callback.js, mcp.js
+│   └── utils/                 logger, glob, crypto
+└── tests/
+    ├── smoke.test.js         tes end-to-end (backend palsu, lazy, profil, OAuth)
+    └── fixtures/echo-server.js
+```
+
+Dua arah OAuth sengaja dipisah folder: `backends/` (gateway sebagai client ke Vercel dsb.) dan `oauth-server/` (gateway sebagai authorization server untuk agen).
+
+Menjalankan tes:
+
+```bash
+npm test
+```
+
+Folder tes sengaja bernama `tests/` (bukan `test/`) karena Node otomatis menjalankan semua file di folder `test/`, termasuk fixture.
