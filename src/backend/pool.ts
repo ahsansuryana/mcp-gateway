@@ -3,8 +3,17 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { ToolListChangedNotificationSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
+import {
+  PromptListChangedNotificationSchema,
+  ResourceListChangedNotificationSchema,
+  ToolListChangedNotificationSchema,
+  type Prompt,
+  type Resource,
+  type ResourceTemplate,
+  type Tool,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { BackendConfig } from "../config/types.js";
+import { UI_EXTENSION, UI_MIME_TYPE } from "../gateway/apps.js";
 import { log } from "../utils/logger.js";
 import { GatewayOAuthProvider } from "./oauth-provider.js";
 import type { TokenStore } from "./token-store.js";
@@ -36,6 +45,8 @@ export class BackendPool {
   private readonly cacheTtlMs: number;
   /** name -> { at, tools } (cache daftar tool) */
   private readonly catalog = new Map<string, { at: number; tools: Tool[] }>();
+  /** `${name}\0${jenis}` -> { at, items } (cache daftar prompt/resource/template) */
+  private readonly lists = new Map<string, { at: number; items: unknown[] }>();
   private readonly transports = new Map<string, Transport>();
   /** name -> transport yang menunggu finishAuth */
   private readonly pending = new Map<string, AuthTransport>();
@@ -68,6 +79,7 @@ export class BackendPool {
 
   invalidate(name: string): void {
     this.catalog.delete(name);
+    for (const k of this.lists.keys()) if (k.startsWith(`${name}\0`)) this.lists.delete(k);
   }
 
   /** Daftar tool backend (semua halaman), di-cache; dibatalkan saat putus atau list_changed. */
@@ -85,6 +97,59 @@ export class BackendPool {
     } while (cursor);
     this.catalog.set(name, { at: Date.now(), tools });
     return tools;
+  }
+
+  /** Apakah backend (yang sedang terhubung) mendeklarasikan kemampuan ini. */
+  supports(name: string, cap: "tools" | "resources" | "prompts" | "completions"): boolean {
+    return !!this.clients.get(name)?.getServerCapabilities()?.[cap];
+  }
+
+  /** Apakah backend (yang sedang terhubung) mengumumkan ekstensi MCP Apps. */
+  supportsApps(name: string): boolean {
+    return !!this.clients.get(name)?.getServerCapabilities()?.extensions?.[UI_EXTENSION];
+  }
+
+  /** Ambil semua halaman satu jenis daftar (prompt/resource/template), di-cache seperti daftar tool. */
+  private async paged<T>(
+    name: string,
+    kind: string,
+    fetchPage: (client: Client, cursor?: string) => Promise<{ items: T[]; nextCursor?: string }>,
+  ): Promise<T[]> {
+    const key = `${name}\0${kind}`;
+    const hit = this.lists.get(key);
+    if (hit && Date.now() - hit.at < this.cacheTtlMs) return hit.items as T[];
+    const client = this.clients.get(name);
+    if (!client) throw new Error(`server '${name}' tidak terhubung`);
+    const items: T[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await fetchPage(client, cursor);
+      items.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor);
+    this.lists.set(key, { at: Date.now(), items });
+    return items;
+  }
+
+  listPrompts(name: string, timeoutMs: number): Promise<Prompt[]> {
+    return this.paged(name, "prompts", async (c, cursor) => {
+      const r = await c.listPrompts({ cursor }, { timeout: timeoutMs });
+      return { items: r.prompts, nextCursor: r.nextCursor };
+    });
+  }
+
+  listResources(name: string, timeoutMs: number): Promise<Resource[]> {
+    return this.paged(name, "resources", async (c, cursor) => {
+      const r = await c.listResources({ cursor }, { timeout: timeoutMs });
+      return { items: r.resources, nextCursor: r.nextCursor };
+    });
+  }
+
+  listResourceTemplates(name: string, timeoutMs: number): Promise<ResourceTemplate[]> {
+    return this.paged(name, "templates", async (c, cursor) => {
+      const r = await c.listResourceTemplates({ cursor }, { timeout: timeoutMs });
+      return { items: r.resourceTemplates, nextCursor: r.nextCursor };
+    });
   }
 
   authUrl(name: string): string | null {
@@ -136,7 +201,10 @@ export class BackendPool {
     const provider = wantsOAuth ? this.getProvider(name) : undefined;
     if (provider) provider.authRequired = false;
 
-    const client = new Client({ name: "mcp-gateway", version: "1.0.0" }, { capabilities: {} });
+    // Umumkan dukungan MCP Apps ke backend (kecuali apps: false). Aman walau host tidak mendukung:
+    // server wajib tetap memberi hasil teks biasa, dan _meta.ui diabaikan host tanpa dukungan Apps.
+    const capabilities = cfg.apps === false ? {} : { extensions: { [UI_EXTENSION]: { mimeTypes: [UI_MIME_TYPE] } } };
+    const client = new Client({ name: "mcp-gateway", version: "1.0.0" }, { capabilities });
     const transport = this.makeTransport(cfg, provider);
     let handled = false;
 
@@ -151,6 +219,8 @@ export class BackendPool {
     client.onclose = () => onDown("koneksi ditutup");
     client.onerror = (e) => log("WARN", `backend '${name}' error:`, e?.message ?? e);
     client.setNotificationHandler(ToolListChangedNotificationSchema, () => this.invalidate(name));
+    client.setNotificationHandler(PromptListChangedNotificationSchema, () => this.invalidate(name));
+    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => this.invalidate(name));
 
     try {
       this.transports.set(name, transport);

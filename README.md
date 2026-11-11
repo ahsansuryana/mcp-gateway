@@ -208,6 +208,9 @@ Nilai string mendukung `${NAMA_ENV}`. Variabel yang tidak ada diganti string kos
 | `expose` | `"full"` \| `"lazy"` \| `"auto"` | semua | Lihat [Mode expose](#mode-expose-full-lazy-auto). Default `"auto"`. |
 | `allow_tools` | array glob | semua | Bila diisi, hanya tool yang cocok yang ditampilkan dan bisa dipanggil. |
 | `deny_tools` | array glob | semua | Tool yang cocok disembunyikan dan ditolak. Dicek setelah `allow_tools`. |
+| `allow_prompts` / `deny_prompts` | array glob | semua | Sama seperti tool, dicocokkan dengan nama prompt **tanpa** awalan server. |
+| `allow_resources` / `deny_resources` | array glob | semua | Dicocokkan dengan **URI asli** resource (sebelum ditulis ulang gateway), mis. `file:///secret*`. Juga berlaku untuk template. |
+| `apps` | boolean | semua | Default `true`: gateway mengumumkan dukungan MCP Apps (`io.modelcontextprotocol/ui`) ke backend ini. Set `false` bila ada backend yang bermasalah dengannya. |
 | `auth` | objek | http, sse | OAuth ke backend. Lihat tabel berikutnya. |
 
 Pola glob memakai `*` untuk "sembarang karakter", dan dicocokkan dengan nama tool **tanpa** awalan server.
@@ -248,6 +251,30 @@ Daftar tool dikirim ke model di setiap percakapan, jadi ratusan tool memakan ban
 `gateway__status` selalu tersedia: menampilkan status tiap backend (jumlah tool, mode) dan URL login OAuth bila ada yang perlu login.
 
 Memanggil tool tersembunyi langsung dengan nama lengkapnya (mis. `vercel__get_deployment_logs`) tetap berfungsi. Sebagian klien menampilkan peringatan "not listed by server", yang tidak berbahaya.
+
+## Prompts, resources, dan MCP Apps
+
+Selain tool, gateway meneruskan **prompts** dan **resources** dari semua backend yang mendukungnya:
+`prompts/list`, `prompts/get`, `resources/list`, `resources/templates/list`, dan `resources/read`. Scope profil, `allow_*`, dan `deny_*` berlaku sama seperti pada tool. `completion/complete` (autocomplete argumen prompt dan variabel template resource) juga diteruskan ke backend yang mendukungnya; backend tanpa kemampuan itu menghasilkan daftar saran kosong.
+
+**Prompt** diberi awalan nama server seperti tool: `docs__ringkas`.
+
+**Resource** hanya punya URI, dan dua backend bisa memakai URI yang sama. Karena itu gateway menulis ulang URI: skema dipertahankan, nama backend disisipkan sebagai host, dan URI asli menjadi path-nya.
+
+| URI backend `docs` | URI yang dilihat agen |
+|---|---|
+| `ui://app/widget` | `ui://docs/app/widget` |
+| `file:///a.txt` | `file://docs//a.txt` |
+| `https://ex.com/a` | `https://docs/ex.com/a` |
+| `mailto:x@y.z` | `mailto://docs/@opaque/x@y.z` |
+
+Penulisan ulang ini murni dan bisa dibalik tepat, jadi gateway tidak menyimpan tabel pemetaan. Gateway menerapkannya ke `resources/list`, `resources/templates/list`, `contents[].uri` pada `resources/read`, serta `resource_link` dan resource tertanam di hasil tool dan pesan prompt. Template yang tidak diawali skema konkret (mis. `{skema}://x`) dilewati dan dicatat di log.
+
+**MCP Apps (`ui://`).** Skema `ui://` sengaja dipertahankan karena host mengenali aplikasi dari skemanya. Tool yang membawa `_meta.ui.resourceUri` (juga bentuk lama `_meta["ui/resourceUri"]`) ikut ditulis ulang, sehingga host mengambil HTML-nya lewat `resources/read` gateway. Pada mode `lazy`, tool yang membawa UI (`_meta.ui`, termasuk yang khusus-aplikasi) tetap ditampilkan di `tools/list` supaya host bisa menemukannya. Tool lain tetap tersembunyi.
+
+Gateway mengumumkan ekstensi `io.modelcontextprotocol/ui` (MIME `text/html;profile=mcp-app`) ke setiap backend, kecuali `apps: false`. Ini aman walau host tidak mendukung Apps, karena server UI wajib tetap memberi hasil teks biasa. Ke arah agen, gateway mengumumkan ekstensi yang sama hanya bila ada backend dalam scope yang mengumumkannya.
+
+UI aplikasi biasanya memanggil tool dan membaca resource dengan **nama/URI aslinya**, tanpa awalan gateway. Karena itu gateway juga menerima nama asli bila tepat satu backend yang memilikinya. Bila ada beberapa, gateway menolak dan menyebut kandidatnya, dan Anda memakai `<server>__<tool>`. Filter `allow_*` / `deny_*` tetap berlaku.
 
 ## Profil
 
@@ -418,4 +445,5 @@ journalctl -u mcp-gateway -f
 - Token tidak dibatasi per profil: token yang sah dapat mengakses `/mcp` maupun `/mcp/<profil>` mana pun.
 - Tidak ada deteksi pemakaian ulang refresh token lama.
 - Mode stateless: tidak ada stream server-ke-klien, sehingga notifikasi dari backend tidak diteruskan ke agen.
+- `resources/subscribe` dan `listChanged` tidak diumumkan (konsekuensi mode stateless). Daftar resource/prompt dari backend di-cache `tools_cache_ttl` detik dan dibatalkan saat backend mengirim `list_changed`.
 - Konfigurasi tidak di-reload otomatis.

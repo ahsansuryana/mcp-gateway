@@ -16,6 +16,14 @@ export interface BackendConfig {
   expose?: ExposeMode;
   allow_tools?: string[];
   deny_tools?: string[];
+  /** Glob terhadap nama prompt (tanpa awalan server). */
+  allow_prompts?: string[];
+  deny_prompts?: string[];
+  /** Glob terhadap URI asli resource (sebelum ditulis ulang gateway). */
+  allow_resources?: string[];
+  deny_resources?: string[];
+  /** Umumkan dukungan MCP Apps (io.modelcontextprotocol/ui) ke backend ini. Default true. */
+  apps?: boolean;
   // http / sse
   url?: string;
   headers?: Record<string, string>;
