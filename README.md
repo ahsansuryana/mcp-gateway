@@ -15,6 +15,7 @@ Fitur utama:
 
 1. [Prasyarat dan instalasi](#prasyarat-dan-instalasi)
 2. [Menjalankan](#menjalankan)
+   - [Docker](#docker)
 3. [Menyambungkan agen](#menyambungkan-agen)
 4. [Referensi konfigurasi (schema)](#referensi-konfigurasi-schema)
 5. [Mode expose: full, lazy, auto](#mode-expose-full-lazy-auto)
@@ -25,7 +26,6 @@ Fitur utama:
 10. [Keamanan](#keamanan)
 11. [Pemecahan masalah](#pemecahan-masalah)
 12. [Batasan](#batasan)
-13. [Struktur proyek](#struktur-proyek)
 
 ---
 
@@ -35,13 +35,29 @@ Fitur utama:
 - Paket `@modelcontextprotocol/sdk` versi 1.x.
 
 ```bash
-mkdir mcp-gateway && cd mcp-gateway
-# salin gateway.js dan folder src/ ke sini
-npm init -y
-npm i @modelcontextprotocol/sdk@^1
+git clone <url-repo> mcp-gateway && cd mcp-gateway
+npm install
+npm run build
 ```
 
-Semua file berekstensi `.js` (ES module). `gateway.js` hanyalah entry point tipis; kodenya ada di `src/`.
+Project ini ditulis dalam TypeScript (ES module). Hasil build ada di `dist/`.
+
+### Struktur project
+
+```
+src/
+  index.ts         entry CLI (-c / --config)
+  app.ts           merakit komponen, start, shutdown
+  config/          tipe dan loader konfigurasi
+  backend/         koneksi ke backend: pool, OAuth client, token store
+  gateway/         katalog tool, filter allow/deny, mode lazy, compact
+  oauth-server/    authorization server OAuth 2.1 milik gateway
+  http/            server HTTP (/mcp, /health, /oauth/callback)
+  utils/           logger, glob, crypto, html
+test/              unit test (npm test)
+```
+
+Skrip npm: `npm run dev` (watch, tanpa build), `npm run build`, `npm start`, `npm run typecheck`, `npm test`.
 
 ## Menjalankan
 
@@ -61,8 +77,9 @@ Semua file berekstensi `.js` (ES module). `gateway.js` hanyalah entry point tipi
 3. Jalankan:
 
    ```bash
-   node gateway.js                      # memakai ./gateway.json
-   node gateway.js -c /path/conf.json   # konfigurasi lain
+   npm start                                  # memakai ./gateway.json
+   node dist/index.js -c /path/conf.json      # konfigurasi lain
+   npm run dev                                # mode pengembangan (tsx watch)
    ```
 
 Contoh log saat start:
@@ -94,6 +111,25 @@ gateway.json
 tokens.json
 oauth-server.json
 ```
+
+## Docker
+
+Image memakai Node 22, build multi-stage, dan berjalan sebagai user non-root `node` (uid 1000).
+
+```bash
+mkdir data
+cp gateway.example.json gateway.json        # sesuaikan; server.port harus 8000
+cp .env.example .env                        # isi GATEWAY_TOKEN, GATEWAY_PASSWORD, dll.
+docker compose up -d --build
+docker compose logs -f
+```
+
+- `data/` di-mount ke `/data`. Isinya `gateway.json` dan file state (`tokens.json`, `oauth-server.json`), karena path state dihitung relatif ke folder konfigurasi. Folder ini harus bisa ditulis uid 1000: buat dengan user biasa, atau `sudo chown -R 1000:1000 data`.
+- Port host diatur lewat `GATEWAY_PORT` di `.env` (default 8000). Port di dalam container tetap `server.port` dari `gateway.json`; jika diubah dari 8000, sesuaikan juga mapping port di `docker-compose.yml` dan `HEALTHCHECK` di `Dockerfile`.
+- Variabel `${NAMA}` di `gateway.json` diisi dari `.env`.
+- Backend `stdio` yang memakai `npx` jalan di dalam container, jadi paketnya diunduh saat pertama kali (cache di volume `npm-cache`). Backend yang butuh binary lain atau browser (mis. Playwright) tidak tersedia di image dasar; buat image turunan atau pakai backend `http`.
+- Backend yang menunjuk `localhost` (mis. `http://localhost:3002/sse`) menunjuk ke container itu sendiri, bukan host. Pakai `host.docker.internal` (tambahkan `extra_hosts: ["host.docker.internal:host-gateway"]` di compose) atau nama service jika satu jaringan compose.
+- Login OAuth ke backend: `backend_redirect_url` default `http://localhost:8000/oauth/callback`. Jika `GATEWAY_PORT` bukan 8000, atau gateway di server remote, atur `server.backend_redirect_url` dan `server.public_url` sesuai alamat yang dibuka di browser.
 
 ## Menyambungkan agen
 
@@ -329,7 +365,7 @@ After=network-online.target
 [Service]
 WorkingDirectory=/opt/mcp-gateway
 EnvironmentFile=/etc/mcp-gateway.env
-ExecStart=/usr/bin/node gateway.js -c /opt/mcp-gateway/gateway.json
+ExecStart=/usr/bin/node dist/index.js -c /opt/mcp-gateway/gateway.json
 Restart=on-failure
 User=mcp
 
@@ -383,57 +419,3 @@ journalctl -u mcp-gateway -f
 - Tidak ada deteksi pemakaian ulang refresh token lama.
 - Mode stateless: tidak ada stream server-ke-klien, sehingga notifikasi dari backend tidak diteruskan ke agen.
 - Konfigurasi tidak di-reload otomatis.
-
----
-
-## Struktur proyek
-
-```
-mcp-gateway/
-├── gateway.js                entry point tipis (node gateway.js tetap berlaku)
-├── gateway.json               konfigurasi aktif (di-gitignore)
-├── gateway.example.json       contoh konfigurasi
-├── src/
-│   ├── main.js               CLI: baca argumen -c, start, shutdown (SIGINT/SIGTERM)
-│   ├── app.js                createApp(): merakit config, pool, OAuth, HTTP server
-│   ├── config/
-│   │   ├── load.js           baca + validasi gateway.json, ekspansi ${ENV}
-│   │   └── runtime.js        nilai turunan: host/port, public_url, redirect URI, daftar issuer
-│   ├── backends/              arah gateway -> backend (gateway = klien MCP / OAuth client)
-│   │   ├── pool.js           BackendPool: koneksi, reconnect + backoff, cache tool, login OAuth
-│   │   ├── transports.js     factory transport http | sse | stdio
-│   │   ├── oauth-provider.js OAuth client provider untuk SDK
-│   │   └── token-store.js    tokens.json (izin 0600)
-│   ├── gateway/               server MCP yang dilihat agen
-│   │   ├── server.js         makeGatewayFactory(): ListTools / CallTool
-│   │   ├── context.js        nilai turunan config + nama tool bawaan
-│   │   ├── catalog.js        katalog tool, allow/deny, scope profil, mode full/lazy/auto
-│   │   ├── handlers.js       eksekusi tool, search, describe, status
-│   │   ├── meta-tools.js     definisi gateway__status / search_tools / describe_tool / call_tool
-│   │   ├── compact.js        pemadatan deskripsi dan schema
-│   │   └── results.js        helper hasil tool + deteksi error auth
-│   ├── oauth-server/          arah agen -> gateway (gateway = authorization server)
-│   │   ├── oauth-server.js   class OAuthServer: DCR, PKCE, token, refresh, revoke
-│   │   ├── routes.js         /register /authorize /token /revoke /.well-known/*
-│   │   ├── pages.js          halaman login persetujuan
-│   │   └── util.js           validasi redirect URI
-│   ├── http/
-│   │   ├── server.js         dispatcher route
-│   │   ├── access.js         bearer auth, issuer per-request, IP klien
-│   │   ├── io.js             sendJson / sendHtml / baca body
-│   │   └── routes/            health.js, backend-callback.js, mcp.js
-│   └── utils/                 logger, glob, crypto
-└── tests/
-    ├── smoke.test.js         tes end-to-end (backend palsu, lazy, profil, OAuth)
-    └── fixtures/echo-server.js
-```
-
-Dua arah OAuth sengaja dipisah folder: `backends/` (gateway sebagai client ke Vercel dsb.) dan `oauth-server/` (gateway sebagai authorization server untuk agen).
-
-Menjalankan tes:
-
-```bash
-npm test
-```
-
-Folder tes sengaja bernama `tests/` (bukan `test/`) karena Node otomatis menjalankan semua file di folder `test/`, termasuk fixture.

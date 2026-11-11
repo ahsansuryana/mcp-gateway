@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+*.log
+tokens.json
+gateway.json
+oauth-server.json
+data
+test
+README.md
+Dockerfile
+docker-compose.yml

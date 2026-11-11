@@ -2,3 +2,7 @@ tokens.json
 gateway.json
 oauth-server.json
 node_modules/
+dist/
+.env
+*.log
+data/
